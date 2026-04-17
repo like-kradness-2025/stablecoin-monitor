@@ -99,6 +99,10 @@ python stablecoin_monitor.py --loop
 ALERT: USDT -18.2bp, FDUSD +25.4bp
 ```
 
+## PR運用
+
+このリポジトリは、変更を push したあとに PR で確認してから取り込む運用にします。
+
 ## 注意点
 
 - CoinMarketCap の `v2/cryptocurrency/quotes/latest` を使っています。
