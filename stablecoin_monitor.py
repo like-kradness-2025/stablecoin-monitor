@@ -309,20 +309,20 @@ def human_deviation_bp(value: float) -> str:
 def apply_dashboard_theme() -> None:
     plt.style.use('dark_background')
     plt.rcParams.update({
-        'figure.facecolor': '#07111f',
-        'axes.facecolor': '#0d1626',
-        'axes.edgecolor': '#2a3a57',
+        'figure.facecolor': '#050816',
+        'axes.facecolor': '#0a1020',
+        'axes.edgecolor': '#20304a',
         'axes.labelcolor': '#dbe7ff',
         'xtick.color': '#9fb0c9',
         'ytick.color': '#9fb0c9',
         'text.color': '#eef4ff',
         'axes.titlecolor': '#f5f8ff',
-        'grid.color': '#27405f',
-        'grid.alpha': 0.28,
-        'font.size': 11,
-        'axes.titlesize': 13,
-        'axes.labelsize': 11,
-        'legend.fontsize': 9,
+        'grid.color': '#1f2f4d',
+        'grid.alpha': 0.18,
+        'font.size': 10.5,
+        'axes.titlesize': 12.5,
+        'axes.labelsize': 10.5,
+        'legend.fontsize': 8.8,
     })
 
 
@@ -332,28 +332,36 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
     chart_path = settings.output_dir / f"stablecoin_monitor_{now_utc.astimezone(JST).strftime('%Y%m%d_%H%M%S')}.png"
 
     fig, axes = plt.subplots(3, 1, figsize=(16, 10), sharex=True)
-    fig.patch.set_facecolor('#07111f')
-    fig.subplots_adjust(left=0.06, right=0.985, top=0.88, bottom=0.08, hspace=0.16)
+    fig.patch.set_facecolor('#050816')
+    accent = fig.add_axes([0.06, 0.968, 0.93, 0.006])
+    accent.set_facecolor('#0a1020')
+    accent.set_xticks([])
+    accent.set_yticks([])
+    for spine in accent.spines.values():
+        spine.set_visible(False)
+    accent.axhline(0.5, color='#ffb020', linewidth=5.5, alpha=0.95, solid_capstyle='round')
+    accent.axhline(0.5, color='#2ee59d', linewidth=2.2, alpha=0.9, solid_capstyle='round')
+    fig.subplots_adjust(left=0.06, right=0.985, top=0.885, bottom=0.08, hspace=0.16)
 
-    stable_palette = ['#4ade80', '#60a5fa', '#f59e0b', '#c084fc', '#22d3ee', '#fb7185', '#a78bfa']
-    palette = {settings.btc_symbol: '#f5a524'}
+    stable_palette = ['#2ee59d', '#67d8ff', '#f97316', '#d66bff', '#25e6ff', '#fb7185', '#8b5cf6']
+    palette = {settings.btc_symbol: '#ffb020'}
     for symbol, color in zip(settings.stable_symbols, stable_palette):
         palette[symbol] = color
-    card_bg = '#0d1626'
-    border = '#27405f'
+    card_bg = '#0a1020'
+    border = '#223657'
     for ax in axes:
         ax.set_facecolor(card_bg)
         for spine in ax.spines.values():
             spine.set_color(border)
             spine.set_linewidth(0.8)
-        ax.grid(True, alpha=0.25)
+        ax.grid(True, alpha=0.18)
 
     btc_rows = history[settings.btc_symbol]
     btc_x = [row['ts_utc'].astimezone(JST) for row in btc_rows]
     btc_y = [row['price_usd'] for row in btc_rows]
     btc_color = palette.get(settings.btc_symbol, '#f5a524')
-    axes[0].plot(btc_x, btc_y, linewidth=2.0, color=btc_color, label=f'{settings.btc_symbol} price')
-    axes[0].fill_between(btc_x, btc_y, color=btc_color, alpha=0.14)
+    axes[0].plot(btc_x, btc_y, linewidth=2.4, color=btc_color, label=f'{settings.btc_symbol} price')
+    axes[0].fill_between(btc_x, btc_y, color=btc_color, alpha=0.09)
     axes[0].set_title(f'{settings.btc_symbol} Price', loc='left', pad=10, fontweight='bold')
     axes[0].set_ylabel(f'{settings.btc_symbol} / USD')
     if btc_y:
@@ -365,12 +373,12 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
             textcoords='offset points',
             va='center',
             color='#f8fafc',
-            bbox=dict(boxstyle='round,pad=0.25', facecolor='#16233a', edgecolor=btc_color, linewidth=0.9),
+            bbox=dict(boxstyle='round,pad=0.25', facecolor='#111a2d', edgecolor=btc_color, linewidth=1.0),
         )
 
     alert_bp = settings.deviation_alert_bp
     axes[1].axhspan(-alert_bp, alert_bp, color='#22c55e', alpha=0.06, zorder=0)
-    axes[1].axhline(0.0, linestyle='--', linewidth=1.0, color='#9aa7bf')
+    axes[1].axhline(0.0, linestyle='--', linewidth=1.0, color='#7486a9')
     axes[1].axhline(alert_bp, linestyle=':', linewidth=0.9, color='#ef4444', alpha=0.7)
     axes[1].axhline(-alert_bp, linestyle=':', linewidth=0.9, color='#ef4444', alpha=0.7)
     axes[1].set_title(f'Stablecoin deviation from $1    alert ±{alert_bp:.0f}bp', loc='left', pad=10, fontweight='bold')
@@ -385,7 +393,7 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
         color = palette.get(symbol, '#60a5fa')
         x = [row['ts_utc'].astimezone(JST) for row in rows]
         deviation_bp = [(row['price_usd'] - 1.0) * 10000.0 for row in rows]
-        axes[1].plot(x, deviation_bp, linewidth=1.8, color=color, label=symbol)
+        axes[1].plot(x, deviation_bp, linewidth=2.0, color=color, label=symbol)
         latest = rows[-1]
         latest_dev = (latest['price_usd'] - 1.0) * 10000.0
         stable_lines.append(f'{symbol} {human_deviation_bp(latest_dev)}')
@@ -397,7 +405,7 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
             textcoords='offset points',
             va='center',
             color=color,
-            bbox=dict(boxstyle='round,pad=0.20', facecolor='#101a2e', edgecolor=color, linewidth=0.8),
+            bbox=dict(boxstyle='round,pad=0.20', facecolor='#0e1730', edgecolor=color, linewidth=0.9),
         )
     axes[1].legend(loc='upper left', ncol=max(1, len(settings.stable_symbols)), frameon=False)
 
@@ -411,8 +419,8 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
         color = palette.get(symbol, '#60a5fa')
         x = [row['ts_utc'].astimezone(JST) for row in rows]
         y = [row['volume_24h_usd'] / 1_000_000_000 for row in rows]
-        axes[2].plot(x, y, linewidth=1.8, color=color, label=symbol)
-        axes[2].fill_between(x, y, color=color, alpha=0.08)
+        axes[2].plot(x, y, linewidth=2.0, color=color, label=symbol)
+        axes[2].fill_between(x, y, color=color, alpha=0.06)
         axes[2].annotate(
             human_volume(rows[-1]['volume_24h_usd']),
             xy=(x[-1], y[-1]),
@@ -420,7 +428,7 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
             textcoords='offset points',
             va='center',
             color=color,
-            bbox=dict(boxstyle='round,pad=0.20', facecolor='#101a2e', edgecolor=color, linewidth=0.8),
+            bbox=dict(boxstyle='round,pad=0.20', facecolor='#0e1730', edgecolor=color, linewidth=0.9),
         )
     axes[2].legend(loc='upper left', ncol=max(1, len(settings.stable_symbols)), frameon=False)
 
@@ -435,18 +443,18 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
     headline = f'Stablecoin Monitor   {latest_timestamp}   |   {settings.btc_symbol} {human_price(latest_btc)}'
     if stable_lines:
         headline += '   |   ' + '   '.join(stable_lines)
-    fig.text(0.06, 0.952, 'Stablecoin Monitor', fontsize=18, fontweight='bold', ha='left', va='center', color='#f8fafc')
-    fig.text(0.06, 0.925, headline, fontsize=10.5, ha='left', va='center', color='#c8d5ea')
+    fig.text(0.06, 0.952, 'Stablecoin Monitor', fontsize=18.5, fontweight='bold', ha='left', va='center', color='#f8fafc')
+    fig.text(0.06, 0.925, headline, fontsize=10.2, ha='left', va='center', color='#aebfd7')
 
     if latest_snapshot_rows:
         table_ax = fig.add_axes([0.79, 0.79, 0.19, 0.15])
-        table_ax.set_facecolor('#0d1626')
+        table_ax.set_facecolor('#0a1020')
         for spine in table_ax.spines.values():
             spine.set_color(border)
             spine.set_linewidth(0.8)
         table_ax.set_xticks([])
         table_ax.set_yticks([])
-        table_ax.set_title('latest snapshot', fontsize=10, loc='left', pad=4, color='#e5eefc')
+        table_ax.set_title('latest snapshot', fontsize=10, loc='left', pad=4, color='#d9e7ff')
         cell_text = [
             [symbol, f'{price:.6f}', human_deviation_bp(dev), human_volume(vol)]
             for symbol, price, dev, vol in latest_snapshot_rows
@@ -462,14 +470,14 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
         table.set_fontsize(8.4)
         table.scale(1.0, 1.15)
         for (row, col), cell in table.get_celld().items():
-            cell.set_edgecolor('#20314a')
+            cell.set_edgecolor('#203656')
             cell.set_linewidth(0.6)
             if row == 0:
-                cell.set_facecolor('#132033')
+                cell.set_facecolor('#111a2d')
                 cell.set_text_props(color='#dbe7ff', weight='bold')
             else:
-                cell.set_facecolor('#0f1a2c')
-                cell.set_text_props(color='#edf3ff')
+                cell.set_facecolor('#0c1425')
+                cell.set_text_props(color='#f1f7ff')
         for row in range(1, len(cell_text) + 1):
             table[(row, 0)]._loc = 'left'
             table[(row, 0)].set_text_props(ha='left')
