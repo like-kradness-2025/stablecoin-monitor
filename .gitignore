@@ -9,6 +9,7 @@ __pycache__/
 *.lock
 .env
 .env.*
+!.env.example
 output/
 logs/
 runtime/
