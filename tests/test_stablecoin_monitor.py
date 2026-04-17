@@ -3,7 +3,6 @@ from __future__ import annotations
 import shutil
 import tempfile
 import unittest
-from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -44,6 +43,16 @@ class StablecoinMonitorTests(unittest.TestCase):
             'FDUSD': self._quote('FDUSD', fdusd, 380_000_000, 35),
         }
 
+    def _five_stable_quotes(self) -> dict[str, dict[str, object]]:
+        return {
+            'BTC': self._quote('BTC', 76000.0, 1_200_000_000_000, 1),
+            'USDT': self._quote('USDT', 1.00018, 138_000_000_000, 3),
+            'USDC': self._quote('USDC', 0.99982, 53_000_000_000, 7),
+            'FDUSD': self._quote('FDUSD', 0.99908, 380_000_000, 35),
+            'TUSD': self._quote('TUSD', 1.00002, 280_000_000, 56),
+            'DAI': self._quote('DAI', 1.00011, 5_000_000_000, 57),
+        }
+
     def _quote(self, symbol: str, price: float, market_cap: float, cmc_rank: int) -> dict[str, object]:
         return {
             'symbol': symbol,
@@ -55,16 +64,20 @@ class StablecoinMonitorTests(unittest.TestCase):
             'last_updated': '2026-04-17T00:00:00Z',
         }
 
-    def _seed_history(self) -> None:
+    def _seed_history(self, stable_symbols: tuple[str, ...] | None = None) -> None:
         now = datetime.now(UTC).replace(microsecond=0)
+        stable_symbols = stable_symbols or self.settings.stable_symbols
         for idx in range(6):
             ts = now - timedelta(minutes=30 * (6 - idx))
-            quotes = self._quotes(
-                btc=75500 + idx * 120,
-                usdt=1.00020 + idx * 0.00001,
-                usdc=0.99985 + idx * 0.000015,
-                fdusd=0.99910 + idx * 0.00002,
-            )
+            quotes = {'BTC': self._quote('BTC', 75500 + idx * 120, 1_200_000_000_000, 1)}
+            for offset, symbol in enumerate(stable_symbols):
+                price = 1.00020 - (offset * 0.00008) + idx * 0.00001
+                market_cap = 138_000_000_000 if symbol == 'USDT' else 53_000_000_000 if symbol == 'USDC' else 380_000_000
+                if symbol == 'TUSD':
+                    market_cap = 280_000_000
+                elif symbol == 'DAI':
+                    market_cap = 5_000_000_000
+                quotes[symbol] = self._quote(symbol, price, market_cap, 3 + offset)
             scm.save_snapshot(self.db_path, ts, quotes)
 
     def test_choose_best_quote_candidate_prefers_better_rank_then_market_cap(self) -> None:
@@ -102,6 +115,27 @@ class StablecoinMonitorTests(unittest.TestCase):
         self.assertEqual(chart_path.suffix.lower(), '.png')
         with chart_path.open('rb') as fh:
             self.assertEqual(fh.read(8), b'\x89PNG\r\n\x1a\n')
+
+    def test_make_chart_supports_five_stables_without_palette_errors(self) -> None:
+        five_settings = scm.Settings(
+            cmc_api_key='test-key',
+            discord_webhook_url=None,
+            db_path=self.db_path,
+            output_dir=self.output_dir,
+            poll_interval_seconds=300,
+            history_days=3,
+            retention_days=30,
+            stable_symbols=('USDT', 'USDC', 'FDUSD', 'TUSD', 'DAI'),
+            btc_symbol='BTC',
+            deviation_alert_bp=15.0,
+            request_timeout_seconds=20,
+        )
+        self._seed_history(stable_symbols=five_settings.stable_symbols)
+        history = scm.load_history(self.db_path, five_settings.history_days, (five_settings.btc_symbol, *five_settings.stable_symbols))
+        chart_path = scm.make_chart(five_settings, history, datetime.now(UTC).replace(microsecond=0))
+
+        self.assertTrue(chart_path.exists())
+        self.assertGreater(chart_path.stat().st_size, 10_000)
 
     def test_run_once_uses_seeded_snapshot_pipeline(self) -> None:
         self._seed_history()
