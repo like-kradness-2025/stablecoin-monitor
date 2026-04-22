@@ -331,153 +331,66 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
     settings.output_dir.mkdir(parents=True, exist_ok=True)
     chart_path = settings.output_dir / f"stablecoin_monitor_{now_utc.astimezone(JST).strftime('%Y%m%d_%H%M%S')}.png"
 
-    fig, axes = plt.subplots(3, 1, figsize=(16, 10), sharex=True)
+    fig = plt.figure(figsize=(14, 10))
     fig.patch.set_facecolor('#07111f')
-    fig.subplots_adjust(left=0.06, right=0.985, top=0.88, bottom=0.08, hspace=0.16)
+    outer = fig.add_gridspec(3, 1, height_ratios=[1.35, 1.1, 0.82], hspace=0.18)
 
-    stable_palette = ['#4ade80', '#60a5fa', '#f59e0b', '#c084fc', '#22d3ee', '#fb7185', '#a78bfa']
-    palette = {settings.btc_symbol: '#f5a524'}
-    for symbol, color in zip(settings.stable_symbols, stable_palette):
-        palette[symbol] = color
-    card_bg = '#0d1626'
-    border = '#27405f'
-    for ax in axes:
-        ax.set_facecolor(card_bg)
-        for spine in ax.spines.values():
-            spine.set_color(border)
-            spine.set_linewidth(0.8)
-        ax.grid(True, alpha=0.25)
+    ax_btc = fig.add_subplot(outer[0, 0])
+    ax_dev = fig.add_subplot(outer[1, 0], sharex=ax_btc)
+    vol_grid = outer[2, 0].subgridspec(3, 1, hspace=0.18)
+    ax_vols = [fig.add_subplot(vol_grid[i, 0]) for i in range(3)]
 
     btc_rows = history[settings.btc_symbol]
     btc_x = [row['ts_utc'].astimezone(JST) for row in btc_rows]
     btc_y = [row['price_usd'] for row in btc_rows]
-    btc_color = palette.get(settings.btc_symbol, '#f5a524')
-    axes[0].plot(btc_x, btc_y, linewidth=2.0, color=btc_color, label=f'{settings.btc_symbol} price')
-    axes[0].fill_between(btc_x, btc_y, color=btc_color, alpha=0.14)
-    axes[0].set_title(f'{settings.btc_symbol} Price', loc='left', pad=10, fontweight='bold')
-    axes[0].set_ylabel(f'{settings.btc_symbol} / USD')
+    ax_btc.plot(btc_x, btc_y, linewidth=1.6, color='#f5a524', label=f'{settings.btc_symbol} price')
+    ax_btc.set_title('Stablecoin Monitor')
+    ax_btc.set_ylabel('BTC price (USD)')
+    ax_btc.grid(True, alpha=0.25)
     if btc_y:
-        axes[0].legend(loc='upper left', frameon=False)
-        axes[0].annotate(
-            human_price(btc_y[-1]),
-            xy=(btc_x[-1], btc_y[-1]),
-            xytext=(8, 0),
-            textcoords='offset points',
-            va='center',
-            color='#f8fafc',
-            bbox=dict(boxstyle='round,pad=0.25', facecolor='#16233a', edgecolor=btc_color, linewidth=0.9),
-        )
+        ax_btc.legend(loc='upper left')
 
-    alert_bp = settings.deviation_alert_bp
-    axes[1].axhspan(-alert_bp, alert_bp, color='#22c55e', alpha=0.06, zorder=0)
-    axes[1].axhline(0.0, linestyle='--', linewidth=1.0, color='#9aa7bf')
-    axes[1].axhline(alert_bp, linestyle=':', linewidth=0.9, color='#ef4444', alpha=0.7)
-    axes[1].axhline(-alert_bp, linestyle=':', linewidth=0.9, color='#ef4444', alpha=0.7)
-    axes[1].set_title(f'Stablecoin deviation from $1    alert ±{alert_bp:.0f}bp', loc='left', pad=10, fontweight='bold')
-    axes[1].set_ylabel('Peg deviation (bp)')
-
-    latest_snapshot_rows: list[tuple[str, float, float, float]] = []
-    stable_lines = []
-    for symbol in settings.stable_symbols:
+    stable_palette = ['#4ade80', '#60a5fa', '#f59e0b']
+    for symbol, color in zip(settings.stable_symbols, stable_palette):
         rows = history[symbol]
-        if not rows:
-            continue
-        color = palette.get(symbol, '#60a5fa')
         x = [row['ts_utc'].astimezone(JST) for row in rows]
         deviation_bp = [(row['price_usd'] - 1.0) * 10000.0 for row in rows]
-        axes[1].plot(x, deviation_bp, linewidth=1.8, color=color, label=symbol)
-        latest = rows[-1]
-        latest_dev = (latest['price_usd'] - 1.0) * 10000.0
-        stable_lines.append(f'{symbol} {human_deviation_bp(latest_dev)}')
-        latest_snapshot_rows.append((symbol, latest['price_usd'], latest_dev, latest['volume_24h_usd']))
-        axes[1].annotate(
-            human_deviation_bp(latest_dev),
-            xy=(x[-1], deviation_bp[-1]),
-            xytext=(8, 0),
-            textcoords='offset points',
-            va='center',
-            color=color,
-            bbox=dict(boxstyle='round,pad=0.20', facecolor='#101a2e', edgecolor=color, linewidth=0.8),
-        )
-    axes[1].legend(loc='upper left', ncol=max(1, len(settings.stable_symbols)), frameon=False)
-
-    axes[2].set_title('Stablecoin 24h volume', loc='left', pad=10, fontweight='bold')
-    axes[2].set_ylabel('24h volume (USD bn)')
-    axes[2].set_xlabel('Time (JST)')
-    for symbol in settings.stable_symbols:
-        rows = history[symbol]
-        if not rows:
-            continue
-        color = palette.get(symbol, '#60a5fa')
-        x = [row['ts_utc'].astimezone(JST) for row in rows]
-        y = [row['volume_24h_usd'] / 1_000_000_000 for row in rows]
-        axes[2].plot(x, y, linewidth=1.8, color=color, label=symbol)
-        axes[2].fill_between(x, y, color=color, alpha=0.08)
-        axes[2].annotate(
-            human_volume(rows[-1]['volume_24h_usd']),
-            xy=(x[-1], y[-1]),
-            xytext=(8, 0),
-            textcoords='offset points',
-            va='center',
-            color=color,
-            bbox=dict(boxstyle='round,pad=0.20', facecolor='#101a2e', edgecolor=color, linewidth=0.8),
-        )
-    axes[2].legend(loc='upper left', ncol=max(1, len(settings.stable_symbols)), frameon=False)
+        ax_dev.plot(x, deviation_bp, linewidth=1.2, label=symbol, color=color)
+    ax_dev.axhline(0.0, linestyle='--', linewidth=1.0, color='#a5b8d6')
+    ax_dev.axhspan(-15.0, 15.0, color='#22c55e', alpha=0.05, zorder=0)
+    ax_dev.set_ylabel('Deviation from $1 (bp)')
+    ax_dev.grid(True, alpha=0.25)
+    ax_dev.legend(loc='upper left', ncol=max(1, len(settings.stable_symbols)))
 
     locator = mdates.AutoDateLocator(minticks=5, maxticks=10)
     formatter = mdates.ConciseDateFormatter(locator)
-    axes[2].xaxis.set_major_locator(locator)
-    axes[2].xaxis.set_major_formatter(formatter)
-    axes[2].tick_params(axis='x', rotation=0)
 
-    latest_btc = btc_y[-1] if btc_y else 0.0
-    latest_timestamp = btc_rows[-1]['ts_utc'].astimezone(JST).strftime('%Y-%m-%d %H:%M:%S JST') if btc_rows else now_utc.astimezone(JST).strftime('%Y-%m-%d %H:%M:%S JST')
-    headline = f'Stablecoin Monitor   {latest_timestamp}   |   {settings.btc_symbol} {human_price(latest_btc)}'
-    if stable_lines:
-        headline += '   |   ' + '   '.join(stable_lines)
-    fig.text(0.06, 0.952, 'Stablecoin Monitor', fontsize=18, fontweight='bold', ha='left', va='center', color='#f8fafc')
-    fig.text(0.06, 0.925, headline, fontsize=10.5, ha='left', va='center', color='#c8d5ea')
+    for ax, symbol, color in zip(ax_vols, settings.stable_symbols, stable_palette):
+        rows = history[symbol]
+        x = [row['ts_utc'].astimezone(JST) for row in rows]
+        y = [row['volume_24h_usd'] / 1_000_000_000 for row in rows]
+        ax.plot(x, y, linewidth=1.1, color=color, label=symbol)
+        ax.set_title(f'{symbol} 24h volume', loc='left', pad=4, fontsize=10, fontweight='bold')
+        ax.set_ylabel('USD bn')
+        ax.grid(True, alpha=0.25)
+        ax.legend(loc='upper left', fontsize=8)
+        ax.xaxis.set_major_locator(locator)
+        ax.xaxis.set_major_formatter(formatter)
+    for ax in ax_vols[:-1]:
+        ax.tick_params(labelbottom=False)
+    ax_vols[-1].set_xlabel('Time (JST)')
 
-    if latest_snapshot_rows:
-        table_ax = fig.add_axes([0.79, 0.79, 0.19, 0.15])
-        table_ax.set_facecolor('#0d1626')
-        for spine in table_ax.spines.values():
-            spine.set_color(border)
-            spine.set_linewidth(0.8)
-        table_ax.set_xticks([])
-        table_ax.set_yticks([])
-        table_ax.set_title('latest snapshot', fontsize=10, loc='left', pad=4, color='#e5eefc')
-        cell_text = [
-            [symbol, f'{price:.6f}', human_deviation_bp(dev), human_volume(vol)]
-            for symbol, price, dev, vol in latest_snapshot_rows
-        ]
-        table = table_ax.table(
-            cellText=cell_text,
-            colLabels=['sym', 'price', 'dev', 'vol24h'],
-            loc='center',
-            cellLoc='right',
-            colLoc='right',
-        )
-        table.auto_set_font_size(False)
-        table.set_fontsize(8.4)
-        table.scale(1.0, 1.15)
-        for (row, col), cell in table.get_celld().items():
-            cell.set_edgecolor('#20314a')
-            cell.set_linewidth(0.6)
-            if row == 0:
-                cell.set_facecolor('#132033')
-                cell.set_text_props(color='#dbe7ff', weight='bold')
-            else:
-                cell.set_facecolor('#0f1a2c')
-                cell.set_text_props(color='#edf3ff')
-        for row in range(1, len(cell_text) + 1):
-            table[(row, 0)]._loc = 'left'
-            table[(row, 0)].set_text_props(ha='left')
-
-    fig.savefig(chart_path, dpi=150, facecolor=fig.get_facecolor())
+    latest_labels = []
+    for symbol in settings.stable_symbols:
+        rows = history[symbol]
+        if rows:
+            latest_labels.append(f"{symbol} {(rows[-1]['price_usd'] - 1.0) * 10000.0:+.1f}bp")
+    if btc_rows:
+        latest_labels.insert(0, f"{settings.btc_symbol} ${btc_rows[-1]['price_usd']:,.0f}")
+    fig.suptitle(' | '.join(latest_labels), fontsize=12)
+    fig.savefig(chart_path, dpi=150)
     plt.close(fig)
     return chart_path
-
 
 def pct_change(current: float, previous: float | None) -> float | None:
     if previous in (None, 0):
