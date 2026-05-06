@@ -355,19 +355,30 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
     # Middle row: Deviation 1x3 cards (horizontal, not stacked, not combined)
     dev_grid = outer[1, 0].subgridspec(1, 3, wspace=0.24)
     ax_devs = [fig.add_subplot(dev_grid[0, i], sharex=ax_btc) for i in range(len(settings.stable_symbols))]
+
+    # Shared tick control for middle row (time labels)
+    dev_locator = mdates.AutoDateLocator(minticks=2, maxticks=4)
+    dev_formatter = mdates.DateFormatter('%m-%d %H:%M', tz=JST)
+
     for ax, symbol, color in zip(ax_devs, settings.stable_symbols, stable_palette):
         rows = history.get(symbol, [])
         if rows:
             x = [row['ts_utc'].astimezone(JST) for row in rows]
             deviation_bp = [(row['price_usd'] - 1.0) * 10000.0 for row in rows]
             ax.plot(x, deviation_bp, linewidth=0.75, color=color)
+            # Set individual Y-axis range based on data
+            y_min, y_max = min(deviation_bp), max(deviation_bp)
+            y_padding = max(1.0, (y_max - y_min) * 0.1)
+            ax.set_ylim(max(-10.0, y_min - y_padding), min(10.0, y_max + y_padding))
         ax.axhline(0.0, linestyle='--', linewidth=0.7, color='#a5b8d6')
         ax.axhspan(-15.0, 15.0, color='#22c55e', alpha=0.035, zorder=0)
         ax.set_title(f'{symbol} Deviation', loc='left', pad=4, fontsize=7.5, fontweight='bold')
         ax.set_ylabel('')
         ax.grid(True, alpha=0.22)
         ax.tick_params(axis='both', labelsize=6)
-        ax.tick_params(labelbottom=False)
+        # Show X-axis labels on middle row cards for time reference
+        ax.xaxis.set_major_locator(dev_locator)
+        ax.xaxis.set_major_formatter(dev_formatter)
 
     # Bottom row: Volume 1x3 cards (horizontal, not stacked)
     vol_grid = outer[2, 0].subgridspec(1, 3, wspace=0.24)
@@ -390,10 +401,6 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
         ax.tick_params(axis='both', labelsize=6)
         ax.xaxis.set_major_locator(locator)
         ax.xaxis.set_major_formatter(formatter)
-        if i < len(ax_vols) - 1:
-            ax.tick_params(labelbottom=False)
-        else:
-            ax.set_xlabel('')
 
     latest_labels = []
     for symbol in settings.stable_symbols:
@@ -403,7 +410,7 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
     if btc_rows:
         latest_labels.insert(0, f"{settings.btc_symbol} ${btc_rows[-1]['price_usd']:,.0f}")
     if latest_labels:
-        fig.suptitle(' | '.join(latest_labels), fontsize=8.5, color='#dbe7ff', y=0.99)
+        fig.suptitle(' | '.join(latest_labels), fontsize=8.5, color='#dbe7ff', y=0.98)
     fig.text(0.985, 0.018, now_utc.astimezone(JST).strftime('%Y-%m-%d %H:%M JST'),
              ha='right', va='bottom', fontsize=6.5, color='#9fb0c9')
 
