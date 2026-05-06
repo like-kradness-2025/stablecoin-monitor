@@ -331,10 +331,10 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
     settings.output_dir.mkdir(parents=True, exist_ok=True)
     chart_path = settings.output_dir / f"stablecoin_monitor_{now_utc.astimezone(JST).strftime('%Y%m%d_%H%M%S')}.png"
 
-    # v2.00: 3-row dashboard. Middle and bottom rows are both 1x3 horizontal cards.
+    # v2.01: 3-row dashboard with Y-axis label spacing fix
     fig = plt.figure(figsize=(7, 5))
     fig.patch.set_facecolor('#07111f')
-    outer = fig.add_gridspec(3, 1, height_ratios=[1.5, 0.6, 0.6], hspace=0.22)
+    outer = fig.add_gridspec(3, 1, height_ratios=[1.5, 0.6, 0.6], hspace=0.26)
 
     stable_palette = ['#4ade80', '#60a5fa', '#f59e0b']
 
@@ -346,31 +346,31 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
         btc_y = [row['price_usd'] for row in btc_rows]
         ax_btc.plot(btc_x, btc_y, linewidth=1.45, color='#f5a524', label=f'{settings.btc_symbol} price')
         ax_btc.legend(loc='upper left', fontsize=7, frameon=False)
-    ax_btc.set_title('Stablecoin Monitor', fontsize=12, fontweight='bold', pad=10)
+    ax_btc.set_title('Stablecoin Monitor', fontsize=12, fontweight='bold', pad=12)
     ax_btc.set_ylabel('BTC price', fontsize=8)
     ax_btc.grid(True, alpha=0.22)
     ax_btc.tick_params(axis='both', labelsize=7)
     ax_btc.tick_params(labelbottom=False)
 
     # Middle row: Deviation 1x3 cards (horizontal, not stacked, not combined)
-    dev_grid = outer[1, 0].subgridspec(1, 3, wspace=0.22)
+    dev_grid = outer[1, 0].subgridspec(1, 3, wspace=0.24)
     ax_devs = [fig.add_subplot(dev_grid[0, i], sharex=ax_btc) for i in range(len(settings.stable_symbols))]
     for ax, symbol, color in zip(ax_devs, settings.stable_symbols, stable_palette):
         rows = history.get(symbol, [])
         if rows:
             x = [row['ts_utc'].astimezone(JST) for row in rows]
             deviation_bp = [(row['price_usd'] - 1.0) * 10000.0 for row in rows]
-            ax.plot(x, deviation_bp, linewidth=1.05, color=color)
+            ax.plot(x, deviation_bp, linewidth=0.75, color=color)
         ax.axhline(0.0, linestyle='--', linewidth=0.7, color='#a5b8d6')
         ax.axhspan(-15.0, 15.0, color='#22c55e', alpha=0.035, zorder=0)
-        ax.set_title(f'{symbol} Deviation', loc='left', pad=3, fontsize=7.5, fontweight='bold')
+        ax.set_title(f'{symbol} Deviation', loc='left', pad=4, fontsize=7.5, fontweight='bold')
         ax.set_ylabel('')
         ax.grid(True, alpha=0.22)
         ax.tick_params(axis='both', labelsize=6)
         ax.tick_params(labelbottom=False)
 
     # Bottom row: Volume 1x3 cards (horizontal, not stacked)
-    vol_grid = outer[2, 0].subgridspec(1, 3, wspace=0.22)
+    vol_grid = outer[2, 0].subgridspec(1, 3, wspace=0.24)
     ax_vols = [fig.add_subplot(vol_grid[0, i], sharex=ax_btc) for i in range(len(settings.stable_symbols))]
 
     # Compact tick control for narrow cards. Avoid ConciseDateFormatter offset text
