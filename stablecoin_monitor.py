@@ -331,66 +331,87 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
     settings.output_dir.mkdir(parents=True, exist_ok=True)
     chart_path = settings.output_dir / f"stablecoin_monitor_{now_utc.astimezone(JST).strftime('%Y%m%d_%H%M%S')}.png"
 
-    fig = plt.figure(figsize=(14, 10))
+    # v2.00: 3-row dashboard. Middle and bottom rows are both 1x3 horizontal cards.
+    fig = plt.figure(figsize=(7, 5))
     fig.patch.set_facecolor('#07111f')
-    outer = fig.add_gridspec(3, 1, height_ratios=[1.35, 1.1, 0.82], hspace=0.18)
-
-    ax_btc = fig.add_subplot(outer[0, 0])
-    ax_dev = fig.add_subplot(outer[1, 0], sharex=ax_btc)
-    vol_grid = outer[2, 0].subgridspec(3, 1, hspace=0.18)
-    ax_vols = [fig.add_subplot(vol_grid[i, 0]) for i in range(3)]
-
-    btc_rows = history[settings.btc_symbol]
-    btc_x = [row['ts_utc'].astimezone(JST) for row in btc_rows]
-    btc_y = [row['price_usd'] for row in btc_rows]
-    ax_btc.plot(btc_x, btc_y, linewidth=1.6, color='#f5a524', label=f'{settings.btc_symbol} price')
-    ax_btc.set_title('Stablecoin Monitor')
-    ax_btc.set_ylabel('BTC price (USD)')
-    ax_btc.grid(True, alpha=0.25)
-    if btc_y:
-        ax_btc.legend(loc='upper left')
+    outer = fig.add_gridspec(3, 1, height_ratios=[1.5, 0.6, 0.6], hspace=0.22)
 
     stable_palette = ['#4ade80', '#60a5fa', '#f59e0b']
-    for symbol, color in zip(settings.stable_symbols, stable_palette):
-        rows = history[symbol]
-        x = [row['ts_utc'].astimezone(JST) for row in rows]
-        deviation_bp = [(row['price_usd'] - 1.0) * 10000.0 for row in rows]
-        ax_dev.plot(x, deviation_bp, linewidth=1.2, label=symbol, color=color)
-    ax_dev.axhline(0.0, linestyle='--', linewidth=1.0, color='#a5b8d6')
-    ax_dev.axhspan(-15.0, 15.0, color='#22c55e', alpha=0.05, zorder=0)
-    ax_dev.set_ylabel('Deviation from $1 (bp)')
-    ax_dev.grid(True, alpha=0.25)
-    ax_dev.legend(loc='upper left', ncol=max(1, len(settings.stable_symbols)))
 
-    locator = mdates.AutoDateLocator(minticks=5, maxticks=10)
-    formatter = mdates.ConciseDateFormatter(locator)
+    # Top row: BTC full-width card
+    ax_btc = fig.add_subplot(outer[0, 0])
+    btc_rows = history.get(settings.btc_symbol, [])
+    if btc_rows:
+        btc_x = [row['ts_utc'].astimezone(JST) for row in btc_rows]
+        btc_y = [row['price_usd'] for row in btc_rows]
+        ax_btc.plot(btc_x, btc_y, linewidth=1.45, color='#f5a524', label=f'{settings.btc_symbol} price')
+        ax_btc.legend(loc='upper left', fontsize=7, frameon=False)
+    ax_btc.set_title('Stablecoin Monitor', fontsize=12, fontweight='bold', pad=10)
+    ax_btc.set_ylabel('BTC price', fontsize=8)
+    ax_btc.grid(True, alpha=0.22)
+    ax_btc.tick_params(axis='both', labelsize=7)
+    ax_btc.tick_params(labelbottom=False)
 
-    for ax, symbol, color in zip(ax_vols, settings.stable_symbols, stable_palette):
-        rows = history[symbol]
-        x = [row['ts_utc'].astimezone(JST) for row in rows]
-        y = [row['volume_24h_usd'] / 1_000_000_000 for row in rows]
-        ax.plot(x, y, linewidth=1.1, color=color, label=symbol)
-        ax.set_title(f'{symbol} 24h volume', loc='left', pad=4, fontsize=10, fontweight='bold')
-        ax.set_ylabel('USD bn')
-        ax.grid(True, alpha=0.25)
-        ax.legend(loc='upper left', fontsize=8)
+    # Middle row: Deviation 1x3 cards (horizontal, not stacked, not combined)
+    dev_grid = outer[1, 0].subgridspec(1, 3, wspace=0.22)
+    ax_devs = [fig.add_subplot(dev_grid[0, i], sharex=ax_btc) for i in range(len(settings.stable_symbols))]
+    for ax, symbol, color in zip(ax_devs, settings.stable_symbols, stable_palette):
+        rows = history.get(symbol, [])
+        if rows:
+            x = [row['ts_utc'].astimezone(JST) for row in rows]
+            deviation_bp = [(row['price_usd'] - 1.0) * 10000.0 for row in rows]
+            ax.plot(x, deviation_bp, linewidth=1.05, color=color)
+        ax.axhline(0.0, linestyle='--', linewidth=0.7, color='#a5b8d6')
+        ax.axhspan(-15.0, 15.0, color='#22c55e', alpha=0.035, zorder=0)
+        ax.set_title(f'{symbol} Deviation', loc='left', pad=3, fontsize=7.5, fontweight='bold')
+        ax.set_ylabel('')
+        ax.grid(True, alpha=0.22)
+        ax.tick_params(axis='both', labelsize=6)
+        ax.tick_params(labelbottom=False)
+
+    # Bottom row: Volume 1x3 cards (horizontal, not stacked)
+    vol_grid = outer[2, 0].subgridspec(1, 3, wspace=0.22)
+    ax_vols = [fig.add_subplot(vol_grid[0, i], sharex=ax_btc) for i in range(len(settings.stable_symbols))]
+
+    # Compact tick control for narrow cards. Avoid ConciseDateFormatter offset text
+    # because it collides with the compact 7x5 dashboard footer.
+    locator = mdates.AutoDateLocator(minticks=2, maxticks=4)
+    formatter = mdates.DateFormatter('%H:%M', tz=JST)
+
+    for i, (ax, symbol, color) in enumerate(zip(ax_vols, settings.stable_symbols, stable_palette)):
+        rows = history.get(symbol, [])
+        if rows:
+            x = [row['ts_utc'].astimezone(JST) for row in rows]
+            y = [row['volume_24h_usd'] / 1_000_000_000 for row in rows]
+            ax.plot(x, y, linewidth=1.05, color=color)
+        ax.set_title(f'{symbol} 24h volume', loc='left', pad=3, fontsize=7.5, fontweight='bold')
+        ax.set_ylabel('')
+        ax.grid(True, alpha=0.22)
+        ax.tick_params(axis='both', labelsize=6)
         ax.xaxis.set_major_locator(locator)
         ax.xaxis.set_major_formatter(formatter)
-    for ax in ax_vols[:-1]:
-        ax.tick_params(labelbottom=False)
-    ax_vols[-1].set_xlabel('Time (JST)')
+        if i < len(ax_vols) - 1:
+            ax.tick_params(labelbottom=False)
+        else:
+            ax.set_xlabel('')
 
     latest_labels = []
     for symbol in settings.stable_symbols:
-        rows = history[symbol]
+        rows = history.get(symbol, [])
         if rows:
             latest_labels.append(f"{symbol} {(rows[-1]['price_usd'] - 1.0) * 10000.0:+.1f}bp")
     if btc_rows:
         latest_labels.insert(0, f"{settings.btc_symbol} ${btc_rows[-1]['price_usd']:,.0f}")
-    fig.suptitle(' | '.join(latest_labels), fontsize=12)
+    if latest_labels:
+        fig.suptitle(' | '.join(latest_labels), fontsize=8.5, color='#dbe7ff', y=0.985)
+    fig.text(0.985, 0.018, now_utc.astimezone(JST).strftime('%Y-%m-%d %H:%M JST'),
+             ha='right', va='bottom', fontsize=6.5, color='#9fb0c9')
+
+    fig.subplots_adjust(left=0.075, right=0.985, top=0.915, bottom=0.095)
     fig.savefig(chart_path, dpi=150)
     plt.close(fig)
     return chart_path
+
 
 def pct_change(current: float, previous: float | None) -> float | None:
     if previous in (None, 0):
