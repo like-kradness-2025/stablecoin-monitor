@@ -26,7 +26,7 @@ CMC_QUOTES_LATEST_URL = 'https://pro-api.coinmarketcap.com/v2/cryptocurrency/quo
 DEFAULT_SYMBOLS = ('BTC', 'USDT', 'USDC', 'FDUSD')
 DEFAULT_STABLES = ('USDT', 'USDC', 'FDUSD')
 DEFAULT_INTERVAL_SECONDS = 300
-DEFAULT_HISTORY_DAYS = 3
+DEFAULT_HISTORY_DAYS = 1
 DEFAULT_RETENTION_DAYS = 30
 DEFAULT_ALERT_BP = 15.0
 
@@ -376,7 +376,7 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
     # Compact tick control for narrow cards. Avoid ConciseDateFormatter offset text
     # because it collides with the compact 7x5 dashboard footer.
     locator = mdates.AutoDateLocator(minticks=2, maxticks=4)
-    formatter = mdates.DateFormatter('%H:%M', tz=JST)
+    formatter = mdates.DateFormatter('%m-%d %H:%M', tz=JST)
 
     for i, (ax, symbol, color) in enumerate(zip(ax_vols, settings.stable_symbols, stable_palette)):
         rows = history.get(symbol, [])
@@ -403,7 +403,7 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
     if btc_rows:
         latest_labels.insert(0, f"{settings.btc_symbol} ${btc_rows[-1]['price_usd']:,.0f}")
     if latest_labels:
-        fig.suptitle(' | '.join(latest_labels), fontsize=8.5, color='#dbe7ff', y=0.985)
+        fig.suptitle(' | '.join(latest_labels), fontsize=8.5, color='#dbe7ff', y=0.99)
     fig.text(0.985, 0.018, now_utc.astimezone(JST).strftime('%Y-%m-%d %H:%M JST'),
              ha='right', va='bottom', fontsize=6.5, color='#9fb0c9')
 
