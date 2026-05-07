@@ -15,6 +15,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -306,6 +307,73 @@ def human_deviation_bp(value: float) -> str:
     return f'{value:+.1f}bp'
 
 
+def start_weighted_baseline_bp(rows: list[dict[str, Any]], window_hours: int = 3) -> float:
+    """Return a baseline from the oldest window, weighting older points more."""
+    if not rows:
+        return 0.0
+
+    start_ts = rows[0]['ts_utc']
+    cutoff_ts = start_ts + timedelta(hours=window_hours)
+    weighted_sum = 0.0
+    weight_sum = 0.0
+
+    for row in rows:
+        ts_utc = row['ts_utc']
+        if ts_utc > cutoff_ts:
+            break
+        deviation_bp = (row['price_usd'] - 1.0) * 10000.0
+        # Oldest point gets the largest weight; newest point in the window still counts.
+        weight = (cutoff_ts - ts_utc).total_seconds() + 1.0
+        weighted_sum += deviation_bp * weight
+        weight_sum += weight
+
+    if weight_sum == 0.0:
+        return (rows[0]['price_usd'] - 1.0) * 10000.0
+    return weighted_sum / weight_sum
+
+
+def add_baseline_colored_line(
+    ax: plt.Axes,
+    x: list[datetime],
+    y: list[float],
+    baseline: float,
+    *,
+    linewidth: float = 0.9,
+    zorder: int = 2,
+) -> None:
+    """Draw a line whose segments switch color above/below a baseline."""
+    if len(x) < 2:
+        if x and y:
+            color = '#22c55e' if y[0] >= baseline else '#EF4444'
+            ax.plot(x, y, linewidth=linewidth, color=color, zorder=zorder)
+        return
+
+    x_num = mdates.date2num(x)
+    segments: list[list[tuple[float, float]]] = []
+    colors: list[str] = []
+
+    for i in range(len(y) - 1):
+        x0, x1 = float(x_num[i]), float(x_num[i + 1])
+        y0, y1 = y[i], y[i + 1]
+        color0 = '#22c55e' if y0 >= baseline else '#EF4444'
+        color1 = '#22c55e' if y1 >= baseline else '#EF4444'
+
+        if color0 == color1 or y0 == y1:
+            segments.append([(x0, y0), (x1, y1)])
+            colors.append(color0)
+            continue
+
+        ratio = (baseline - y0) / (y1 - y0)
+        xc = x0 + (x1 - x0) * ratio
+        segments.append([(x0, y0), (xc, baseline)])
+        colors.append(color0)
+        segments.append([(xc, baseline), (x1, y1)])
+        colors.append(color1)
+
+    collection = LineCollection(segments, colors=colors, linewidths=linewidth, zorder=zorder)
+    ax.add_collection(collection)
+
+
 def apply_dashboard_theme() -> None:
     plt.style.use('dark_background')
     plt.rcParams.update({
@@ -365,15 +433,17 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
         if rows:
             x = [row['ts_utc'].astimezone(JST) for row in rows]
             deviation_bp = [(row['price_usd'] - 1.0) * 10000.0 for row in rows]
-            ax.plot(x, deviation_bp, linewidth=0.50, color=color)
-            # Draw baseline from 24h ago value (first value in period)
-            baseline_bp = deviation_bp[0]
-            ax.axhline(baseline_bp, linestyle=':', linewidth=0.5, color='#a5b8d6', alpha=0.6)
-            # Draw colored background bands based on baseline
+            baseline_bp = start_weighted_baseline_bp(rows)
+            # Draw colored background bands based on the oldest 3h weighted baseline
             # Green band above baseline, red band below baseline
             y_min, y_max = min(deviation_bp), max(deviation_bp)
-            ax.axhspan(baseline_bp, y_max, color='#22c55e', alpha=0.12, zorder=0)
-            ax.axhspan(y_min, baseline_bp, color='#EF4444', alpha=0.12, zorder=0)
+            ax.axhspan(baseline_bp, y_max, color='#22c55e', alpha=0.07, zorder=0)
+            ax.axhspan(y_min, baseline_bp, color='#EF4444', alpha=0.07, zorder=0)
+            # Draw deviation line segments colored by position relative to baseline.
+            # Background bands stay subtle; the line itself switches at baseline crossings.
+            add_baseline_colored_line(ax, x, deviation_bp, baseline_bp, linewidth=0.9, zorder=4)
+            # Draw baseline from the oldest 3h weighted average
+            ax.axhline(baseline_bp, linestyle=':', linewidth=0.8, color='#dbeafe', alpha=0.85, zorder=3)
             # Set Y-axis range based on min/max values in the period, ensuring 0 line is always visible
             y_range = y_max - y_min
             if y_range == 0:
