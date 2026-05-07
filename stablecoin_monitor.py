@@ -365,13 +365,26 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
         if rows:
             x = [row['ts_utc'].astimezone(JST) for row in rows]
             deviation_bp = [(row['price_usd'] - 1.0) * 10000.0 for row in rows]
-            ax.plot(x, deviation_bp, linewidth=0.75, color=color)
-            # Set individual Y-axis range based on data
+            ax.plot(x, deviation_bp, linewidth=0.50, color=color)
+            # Draw baseline from 24h ago value (first value in period)
+            baseline_bp = deviation_bp[0]
+            ax.axhline(baseline_bp, linestyle=':', linewidth=0.5, color='#a5b8d6', alpha=0.6)
+            # Draw colored background bands based on baseline
+            # Green band above baseline, red band below baseline
             y_min, y_max = min(deviation_bp), max(deviation_bp)
-            y_padding = max(1.0, (y_max - y_min) * 0.1)
-            ax.set_ylim(max(-10.0, y_min - y_padding), min(10.0, y_max + y_padding))
+            ax.axhspan(baseline_bp, y_max, color='#22c55e', alpha=0.12, zorder=0)
+            ax.axhspan(y_min, baseline_bp, color='#EF4444', alpha=0.12, zorder=0)
+            # Set Y-axis range based on min/max values in the period, ensuring 0 line is always visible
+            y_range = y_max - y_min
+            if y_range == 0:
+                # Handle flat line case
+                ax.set_ylim(y_min - 1.0, y_max + 1.0)
+            else:
+                y_padding = y_range * 0.1
+                lower = min(y_min - y_padding, 0)
+                upper = max(y_max + y_padding, 0)
+                ax.set_ylim(lower, upper)
         ax.axhline(0.0, linestyle='--', linewidth=0.7, color='#a5b8d6')
-        ax.axhspan(-15.0, 15.0, color='#22c55e', alpha=0.035, zorder=0)
         ax.set_title(f'{symbol} Deviation', loc='left', pad=4, fontsize=7.5, fontweight='bold')
         ax.set_ylabel('')
         ax.grid(True, alpha=0.22)
