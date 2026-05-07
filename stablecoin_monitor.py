@@ -414,7 +414,7 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
         btc_y = [row['price_usd'] for row in btc_rows]
         ax_btc.plot(btc_x, btc_y, linewidth=1.45, color='#f5a524', label=f'{settings.btc_symbol} price')
         ax_btc.legend(loc='upper left', fontsize=7, frameon=False)
-    ax_btc.set_title('Stablecoin Monitor', fontsize=12, fontweight='bold', pad=12)
+    ax_btc.set_title('Stablecoin Monitor', fontsize=12, fontweight='bold', pad=15)
     ax_btc.set_ylabel('BTC price', fontsize=8)
     ax_btc.grid(True, alpha=0.22)
     ax_btc.tick_params(axis='both', labelsize=7)
@@ -493,11 +493,11 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
     if btc_rows:
         latest_labels.insert(0, f"{settings.btc_symbol} ${btc_rows[-1]['price_usd']:,.0f}")
     if latest_labels:
-        fig.suptitle(' | '.join(latest_labels), fontsize=8.5, color='#dbe7ff', y=0.98)
+        fig.suptitle(' | '.join(latest_labels), fontsize=10, color='#dbe7ff', y=0.96)
     fig.text(0.985, 0.018, now_utc.astimezone(JST).strftime('%Y-%m-%d %H:%M JST'),
              ha='right', va='bottom', fontsize=6.5, color='#9fb0c9')
 
-    fig.subplots_adjust(left=0.075, right=0.985, top=0.915, bottom=0.095)
+    fig.subplots_adjust(left=0.075, right=0.985, top=0.93, bottom=0.095)
     fig.savefig(chart_path, dpi=150)
     plt.close(fig)
     return chart_path
