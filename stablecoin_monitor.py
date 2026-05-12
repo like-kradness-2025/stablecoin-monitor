@@ -627,31 +627,40 @@ def main() -> int:
         next_fetch_at = now + settings.fetch_interval_seconds
         next_render_at = now + settings.render_interval_seconds
 
+        # Keep latest successful quotes for render fallback
+        latest_quotes: dict[str, dict[str, Any]] | None = None
+
         logging.info('Starting dual-interval loop. Fetch=%ss, Render=%ss',
                      settings.fetch_interval_seconds, settings.render_interval_seconds)
         while True:
             now = time.monotonic()
-            should_fetch = now >= next_fetch_at
-            should_render = now >= next_render_at
 
-            if should_fetch:
+            # Process all due fetch cycles
+            while now >= next_fetch_at:
+                next_fetch_at += settings.fetch_interval_seconds
                 try:
                     quotes = fetch_data(settings, session)
+                    latest_quotes = quotes
                     logging.info('Fetch completed.')
-                    # Pass latest quotes to render if scheduled
-                    if should_render:
-                        try:
-                            chart_path, summary = render_chart(settings, quotes)
-                            logging.info('Chart saved: %s', chart_path)
-                            print(summary)
-                            next_render_at += settings.render_interval_seconds
-                        except Exception:
-                            logging.exception('Render failed.')
-                    next_fetch_at += settings.fetch_interval_seconds
                 except KeyboardInterrupt:
                     raise
                 except Exception:
                     logging.exception('Fetch failed.')
+
+            # Process all due render cycles
+            while now >= next_render_at:
+                next_render_at += settings.render_interval_seconds
+                try:
+                    if latest_quotes is None:
+                        logging.warning('No quotes available for render, skipping.')
+                        continue
+                    chart_path, summary = render_chart(settings, latest_quotes)
+                    logging.info('Chart saved: %s', chart_path)
+                    print(summary)
+                except KeyboardInterrupt:
+                    raise
+                except Exception:
+                    logging.exception('Render failed.')
 
             # Sleep for 1 second to avoid busy loop
             time.sleep(1)
