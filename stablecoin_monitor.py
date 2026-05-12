@@ -39,6 +39,8 @@ class Settings:
     db_path: Path
     output_dir: Path
     poll_interval_seconds: int
+    fetch_interval_seconds: int
+    render_interval_seconds: int
     history_days: int
     retention_days: int
     stable_symbols: tuple[str, ...]
@@ -108,12 +110,19 @@ def load_settings(base_dir: Path) -> Settings:
     if btc_symbol in stable_symbols:
         raise ConfigError('BTC_SYMBOL must not also be inside STABLE_SYMBOLS')
 
+    # Backward compatibility: use POLL_INTERVAL_SECONDS if new intervals not set
+    poll_interval = env_int('POLL_INTERVAL_SECONDS', DEFAULT_INTERVAL_SECONDS)
+    fetch_interval = env_int('FETCH_INTERVAL_SECONDS', poll_interval)
+    render_interval = env_int('RENDER_INTERVAL_SECONDS', poll_interval)
+
     return Settings(
         cmc_api_key=cmc_api_key,
         discord_webhook_url=(os.getenv('DISCORD_WEBHOOK_URL') or '').strip() or None,
         db_path=db_path,
         output_dir=output_dir,
-        poll_interval_seconds=env_int('POLL_INTERVAL_SECONDS', DEFAULT_INTERVAL_SECONDS),
+        poll_interval_seconds=poll_interval,
+        fetch_interval_seconds=fetch_interval,
+        render_interval_seconds=render_interval,
         history_days=env_int('HISTORY_DAYS', DEFAULT_HISTORY_DAYS),
         retention_days=env_int('RETENTION_DAYS', DEFAULT_RETENTION_DAYS),
         stable_symbols=stable_symbols,
@@ -545,16 +554,22 @@ def send_discord(webhook_url: str, content: str, chart_path: Path, timeout_secon
     response.raise_for_status()
 
 
-def run_once(settings: Settings, session: requests.Session) -> tuple[Path, str]:
+def fetch_data(settings: Settings, session: requests.Session) -> dict[str, dict[str, Any]]:
+    """Fetch latest quotes from CMC and save to DB. Returns quotes dict."""
     ts_utc = datetime.now(UTC).replace(microsecond=0)
     quotes = fetch_quotes_latest(session, settings)
     save_snapshot(settings.db_path, ts_utc, quotes)
     deleted = prune_db(settings.db_path, settings.retention_days)
     if deleted:
         logging.info('Pruned %s old rows.', deleted)
+    return quotes
 
+
+def render_chart(settings: Settings, quotes: dict[str, dict[str, Any]]) -> tuple[Path, str]:
+    """Load history from DB, generate chart, build summary, send Discord notification."""
     symbols = (settings.btc_symbol, *settings.stable_symbols)
     history = load_history(settings.db_path, settings.history_days, symbols)
+    ts_utc = datetime.now(UTC).replace(microsecond=0)
     chart_path = make_chart(settings, history, ts_utc)
     summary = build_summary(settings, quotes, history)
 
@@ -565,6 +580,11 @@ def run_once(settings: Settings, session: requests.Session) -> tuple[Path, str]:
         logging.info('DISCORD_WEBHOOK_URL not set. Chart saved locally only.')
 
     return chart_path, summary
+
+
+def run_once(settings: Settings, session: requests.Session) -> tuple[Path, str]:
+    quotes = fetch_data(settings, session)
+    return render_chart(settings, quotes)
 
 
 def parse_args() -> argparse.Namespace:
