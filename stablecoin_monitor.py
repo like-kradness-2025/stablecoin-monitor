@@ -622,22 +622,39 @@ def main() -> int:
             print(summary)
             return 0
 
-        logging.info('Starting loop. Interval=%ss', settings.poll_interval_seconds)
-        while True:
-            start = time.monotonic()
-            try:
-                chart_path, summary = run_once(settings, session)
-                logging.info('Chart saved: %s', chart_path)
-                print(summary)
-            except KeyboardInterrupt:
-                raise
-            except Exception:
-                logging.exception('Cycle failed.')
+        # Initialize schedule boundaries
+        now = time.monotonic()
+        next_fetch_at = now + settings.fetch_interval_seconds
+        next_render_at = now + settings.render_interval_seconds
 
-            elapsed = time.monotonic() - start
-            sleep_seconds = max(1, settings.poll_interval_seconds - int(elapsed))
-            logging.info('Sleeping %ss until next cycle.', sleep_seconds)
-            time.sleep(sleep_seconds)
+        logging.info('Starting dual-interval loop. Fetch=%ss, Render=%ss',
+                     settings.fetch_interval_seconds, settings.render_interval_seconds)
+        while True:
+            now = time.monotonic()
+            should_fetch = now >= next_fetch_at
+            should_render = now >= next_render_at
+
+            if should_fetch:
+                try:
+                    quotes = fetch_data(settings, session)
+                    logging.info('Fetch completed.')
+                    # Pass latest quotes to render if scheduled
+                    if should_render:
+                        try:
+                            chart_path, summary = render_chart(settings, quotes)
+                            logging.info('Chart saved: %s', chart_path)
+                            print(summary)
+                            next_render_at += settings.render_interval_seconds
+                        except Exception:
+                            logging.exception('Render failed.')
+                    next_fetch_at += settings.fetch_interval_seconds
+                except KeyboardInterrupt:
+                    raise
+                except Exception:
+                    logging.exception('Fetch failed.')
+
+            # Sleep for 1 second to avoid busy loop
+            time.sleep(1)
     except KeyboardInterrupt:
         logging.info('Stopped by user.')
         return 0
