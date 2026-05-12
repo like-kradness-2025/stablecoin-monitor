@@ -354,11 +354,11 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
     for symbol, color in zip(settings.stable_symbols, stable_palette):
         rows = history[symbol]
         x = [row['ts_utc'].astimezone(JST) for row in rows]
-        deviation_bp = [(row['price_usd'] - 1.0) * 10000.0 for row in rows]
-        ax_dev.plot(x, deviation_bp, linewidth=1.2, label=symbol, color=color)
-    ax_dev.axhline(0.0, linestyle='--', linewidth=1.0, color='#a5b8d6')
-    ax_dev.axhspan(-15.0, 15.0, color='#22c55e', alpha=0.05, zorder=0)
-    ax_dev.set_ylabel('Deviation from $1 (bp)')
+        price_usd = [row['price_usd'] for row in rows]
+        ax_dev.plot(x, price_usd, linewidth=1.2, label=symbol, color=color)
+    ax_dev.axhline(1.0, linestyle='--', linewidth=1.0, color='#a5b8d6')
+    ax_dev.axhspan(0.9985, 1.0015, color='#22c55e', alpha=0.05, zorder=0)
+    ax_dev.set_ylabel('Stablecoin price (USD)')
     ax_dev.grid(True, alpha=0.25)
     ax_dev.legend(loc='upper left', ncol=max(1, len(settings.stable_symbols)))
 
