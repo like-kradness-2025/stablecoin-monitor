@@ -63,16 +63,26 @@ DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
 
 ## 実行
 
-### 1回だけ実行
+### 1 回だけ実行
 
 ```bash
 python stablecoin_monitor.py --once
 ```
 
-### 5分ごとに常駐実行
+### 常駐実行
+
+- データは 1 分ごとに取得・保存されます
+- チャートは 5 分ごとに生成されます
 
 ```bash
 python stablecoin_monitor.py --loop
+```
+
+環境変数で間隔を変更できます:
+
+```env
+FETCH_INTERVAL_SECONDS=60
+RENDER_INTERVAL_SECONDS=300
 ```
 
 ## 出力
@@ -145,7 +155,9 @@ ALERT: USDT -18.2bp, FDUSD +25.4bp
 | `DISCORD_WEBHOOK_URL` | Discord Webhook URL（任意） | 未設定 |
 | `DB_PATH` | SQLite データベースの保存先 | `data/stablecoin_monitor.db` |
 | `OUTPUT_DIR` | 画像の保存先ディレクトリ | `output` |
-| `POLL_INTERVAL_SECONDS` | 監視間隔（秒） | `300`（5 分） |
+| `POLL_INTERVAL_SECONDS` | 監視間隔（秒、後方互換用） | `300`（5 分） |
+| `FETCH_INTERVAL_SECONDS` | データ取得間隔（秒） | `60`（1 分） |
+| `RENDER_INTERVAL_SECONDS` | チャート生成間隔（秒） | `300`（5 分） |
 | `HISTORY_DAYS` | チャートに表示する履歴期間（日） | `3` |
 | `RETENTION_DAYS` | データベースの保持期間（日） | `30` |
 | `BTC_SYMBOL` | BTC のシンボル | `BTC` |
