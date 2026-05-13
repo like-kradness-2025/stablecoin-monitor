@@ -49,11 +49,15 @@ pip install -r requirements.txt
 
 ### 2. `.env` を作る
 
-`.env.example` を `.env` にコピーして、`CMC_API_KEY` だけ入れてください。
+`.env.example` を `.env` にコピーして、`CMC_API_KEY` を入れてください。
 
 ```env
 CMC_API_KEY=your_coinmarketcap_api_key
+FETCH_INTERVAL_SECONDS=60
+RENDER_INTERVAL_SECONDS=300
 ```
+
+`POLL_INTERVAL_SECONDS` は後方互換用の legacy 設定です。基本は `FETCH_INTERVAL_SECONDS` / `RENDER_INTERVAL_SECONDS` を使ってください。
 
 Discord 通知も使うならこれも入れます。
 
@@ -63,16 +67,28 @@ DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
 
 ## 実行
 
-### 1回だけ実行
+### 1 回だけ実行
 
 ```bash
 python stablecoin_monitor.py --once
 ```
 
-### 5分ごとに常駐実行
+### 常駐実行
+
+`--loop` モードでは、**データ取得を 1 分ごと**、**チャート生成を 5 分ごと**に行います。
+
+- データは 1 分ごとに取得・保存されます
+- チャートは 5 分ごとに生成されます
 
 ```bash
 python stablecoin_monitor.py --loop
+```
+
+環境変数で間隔を変更できます:
+
+```env
+FETCH_INTERVAL_SECONDS=60
+RENDER_INTERVAL_SECONDS=300
 ```
 
 ## 出力
@@ -80,24 +96,80 @@ python stablecoin_monitor.py --loop
 - DB: `data/stablecoin_monitor.db`
 - 画像: `output/stablecoin_monitor_YYYYMMDD_HHMMSS.png`
 
-## チャート内容
+## チャート内容（v2.00）
 
-- ダークテーマのダッシュボード風レイアウト
-- 上段: BTC価格
-- 中段: ステーブルコインの $1 からの乖離（bp）
-- 下段: 各ステーブルコインの 24h 出来高
-- 右上: 最新スナップショット表
-- 上部: タイムスタンプと最新値のサマリ
+ダークテーマのダッシュボード風レイアウトです。
+
+### 構造図
+
+```
+┌─────────────────────────────────────────────────────┐
+│  BTC $81,xxx | USDT -x.xbp | USDC -x.xbp | FDUSD -x.xbp │  ← 最新値サマリー
+├─────────────────────────────────────────────────────┤
+│                    Stablecoin Monitor                │
+│              BTC 価格チャート（全幅）                   │
+├─────────────────────────────────────────────────────┤
+│  USDT Deviation  │  USDC Deviation  │  FDUSD Deviation │  ← 横 1x3 カード
+├──────────────────┼───────────────────┼──────────────────┤
+│ USDT 24h volume │ USDC 24h volume  │ FDUSD 24h volume │  ← 横 1x3 カード
+└──────────────────┴───────────────────┴──────────────────┘
+                        右下：日時表示（JST）
+```
+
+### 詳細仕様
+
+**全体サイズ:** `figsize=(7, 5)`
+
+**高さ比率:** `[1.5, 0.6, 0.6]`（上段：中段：下段）
+
+| セクション | 内容 | 備考 |
+|-----------|------|------|
+| 上段 | BTC 価格チャート | 全幅、オレンジ色 |
+| 中段 | 乖離率（bp） | 横 1x3 カード、USDT/USDC/FDUSD |
+| 下段 | 24h 出来高 | 横 1x3 カード、USDT/USDC/FDUSD |
+
+**配色:**
+- USDT: 緑色
+- USDC: 青色
+- FDUSD: オレンジ色
+
+**ラベル:**
+- 中段・下段の Y 軸単位ラベルは省略（視認性向上）
+- 上段・中段の X 軸ラベルは省略（重複回避）
+- 下段の X 軸は右端カードのみ表示
+
+**日時:**
+- 右下に JST 形式の日時表示
 
 ## アラート
 
-`DEVIATION_ALERT_BP` を超えたら、要約文に `ALERT` が出ます。
+`DEVIATION_ALERT_BP` を超えたら、要約文に `ALERT` が出力されます。
 
 例:
 
 ```text
 ALERT: USDT -18.2bp, FDUSD +25.4bp
 ```
+
+## 環境変数設定
+
+`.env` ファイルに以下を設定できます。
+
+| 変数名 | 説明 | デフォルト |
+|--------|------|-----------|
+| `CMC_API_KEY` | CoinMarketCap API キー（必須） | - |
+| `DISCORD_WEBHOOK_URL` | Discord Webhook URL（任意） | 未設定 |
+| `DB_PATH` | SQLite データベースの保存先 | `data/stablecoin_monitor.db` |
+| `OUTPUT_DIR` | 画像の保存先ディレクトリ | `output` |
+| `POLL_INTERVAL_SECONDS` | 監視間隔（秒、後方互換用） | `300`（5 分） |
+| `FETCH_INTERVAL_SECONDS` | データ取得間隔（秒） | `60`（1 分） |
+| `RENDER_INTERVAL_SECONDS` | チャート生成間隔（秒） | `300`（5 分） |
+| `HISTORY_DAYS` | チャートに表示する履歴期間（日） | `3` |
+| `RETENTION_DAYS` | データベースの保持期間（日） | `30` |
+| `BTC_SYMBOL` | BTC のシンボル | `BTC` |
+| `STABLE_SYMBOLS` | 監視対象ステーブルコイン（カンマ区切り） | `USDT,USDC,FDUSD` |
+| `DEVIATION_ALERT_BP` | アラート閾値（bp） | `15` |
+| `REQUEST_TIMEOUT_SECONDS` | API リクエストのタイムアウト（秒） | `20` |
 
 ## PR運用
 
