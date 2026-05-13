@@ -49,11 +49,15 @@ pip install -r requirements.txt
 
 ### 2. `.env` を作る
 
-`.env.example` を `.env` にコピーして、`CMC_API_KEY` だけ入れてください。
+`.env.example` を `.env` にコピーして、`CMC_API_KEY` を入れてください。
 
 ```env
 CMC_API_KEY=your_coinmarketcap_api_key
+FETCH_INTERVAL_SECONDS=60
+RENDER_INTERVAL_SECONDS=300
 ```
+
+`POLL_INTERVAL_SECONDS` は後方互換用の legacy 設定です。基本は `FETCH_INTERVAL_SECONDS` / `RENDER_INTERVAL_SECONDS` を使ってください。
 
 Discord 通知も使うならこれも入れます。
 
@@ -70,6 +74,8 @@ python stablecoin_monitor.py --once
 ```
 
 ### 常駐実行
+
+`--loop` モードでは、**データ取得を 1 分ごと**、**チャート生成を 5 分ごと**に行います。
 
 - データは 1 分ごとに取得・保存されます
 - チャートは 5 分ごとに生成されます

@@ -147,9 +147,20 @@ def build_session() -> requests.Session:
     return session
 
 
+def get_db_connection(db_path: Path, read_only: bool = False) -> sqlite3.Connection:
+    """Create a SQLite connection with optimized PRAGMAs for the monitor."""
+    if read_only:
+        conn = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
+    else:
+        conn = sqlite3.connect(db_path)
+    conn.execute('PRAGMA journal_mode=WAL')
+    conn.execute('PRAGMA synchronous=NORMAL')
+    conn.execute('PRAGMA busy_timeout=5000')
+    return conn
+
 def init_db(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(db_path) as conn:
+    with get_db_connection(db_path) as conn:
         conn.execute(
             '''
             CREATE TABLE IF NOT EXISTS snapshots (
@@ -244,7 +255,7 @@ def save_snapshot(db_path: Path, ts_utc: datetime, quotes: dict[str, dict[str, A
         )
         for symbol, payload in quotes.items()
     ]
-    with sqlite3.connect(db_path) as conn:
+    with get_db_connection(db_path) as conn:
         conn.executemany(
             '''
             INSERT OR REPLACE INTO snapshots
@@ -258,7 +269,7 @@ def save_snapshot(db_path: Path, ts_utc: datetime, quotes: dict[str, dict[str, A
 
 def prune_db(db_path: Path, retention_days: int) -> int:
     cutoff = datetime.now(UTC) - timedelta(days=retention_days)
-    with sqlite3.connect(db_path) as conn:
+    with get_db_connection(db_path, read_only=False) as conn:
         cursor = conn.execute(
             'DELETE FROM snapshots WHERE ts_utc < ?',
             (cutoff.isoformat(),),
@@ -279,7 +290,7 @@ def load_history(db_path: Path, days: int, symbols: Iterable[str]) -> dict[str, 
         ORDER BY ts_utc ASC
     '''
     out: dict[str, list[dict[str, Any]]] = {symbol: [] for symbol in symbols}
-    with sqlite3.connect(db_path) as conn:
+    with get_db_connection(db_path, read_only=True) as conn:
         for ts_utc, symbol, price_usd, volume_24h_usd, market_cap_usd, cmc_rank in conn.execute(sql, params):
             out[symbol].append(
                 {
@@ -554,37 +565,88 @@ def send_discord(webhook_url: str, content: str, chart_path: Path, timeout_secon
     response.raise_for_status()
 
 
-def fetch_data(settings: Settings, session: requests.Session) -> dict[str, dict[str, Any]]:
-    """Fetch latest quotes from CMC and save to DB. Returns quotes dict."""
-    ts_utc = datetime.now(UTC).replace(microsecond=0)
-    quotes = fetch_quotes_latest(session, settings)
-    save_snapshot(settings.db_path, ts_utc, quotes)
-    deleted = prune_db(settings.db_path, settings.retention_days)
-    if deleted:
-        logging.info('Pruned %s old rows.', deleted)
+def build_latest_quotes_from_history(settings: Settings, history: dict[str, list[dict[str, Any]]]) -> dict[str, dict[str, Any]]:
+    quotes: dict[str, dict[str, Any]] = {}
+    for symbol in (settings.btc_symbol, *settings.stable_symbols):
+        rows = history.get(symbol, [])
+        if rows:
+            latest = rows[-1]
+            quotes[symbol] = {
+                'price_usd': latest['price_usd'],
+                'volume_24h_usd': latest['volume_24h_usd'],
+            }
+        elif symbol == settings.btc_symbol:
+            quotes[symbol] = {'price_usd': 0.0, 'volume_24h_usd': 0.0}
+        else:
+            quotes[symbol] = {'price_usd': 1.0, 'volume_24h_usd': 0.0}
     return quotes
 
 
-def render_chart(settings: Settings, quotes: dict[str, dict[str, Any]]) -> tuple[Path, str]:
-    """Load history from DB, generate chart, build summary, send Discord notification."""
-    symbols = (settings.btc_symbol, *settings.stable_symbols)
-    history = load_history(settings.db_path, settings.history_days, symbols)
-    ts_utc = datetime.now(UTC).replace(microsecond=0)
-    chart_path = make_chart(settings, history, ts_utc)
-    summary = build_summary(settings, quotes, history)
+def fetch_and_store_snapshot(session: requests.Session, settings: Settings) -> bool:
+    """Fetch the latest quotes and persist them to SQLite."""
+    try:
+        ts_utc = datetime.now(UTC).replace(microsecond=0)
+        quotes = fetch_quotes_latest(session, settings)
+        save_snapshot(settings.db_path, ts_utc, quotes)
+        deleted = prune_db(settings.db_path, settings.retention_days)
+        if deleted:
+            logging.info('Pruned %s old rows.', deleted)
+        return True
+    except KeyboardInterrupt:
+        raise
+    except Exception:
+        logging.exception('Fetch/store snapshot failed.')
+        return False
+
+
+def render_and_notify_chart(settings: Settings) -> bool:
+    """Load history, render the chart, and notify Discord if configured."""
+    try:
+        symbols = (settings.btc_symbol, *settings.stable_symbols)
+        history = load_history(settings.db_path, settings.history_days, symbols)
+    except KeyboardInterrupt:
+        raise
+    except Exception:
+        logging.exception('History loading failed.')
+        return False
+
+    try:
+        ts_utc = datetime.now(UTC).replace(microsecond=0)
+        chart_path = make_chart(settings, history, ts_utc)
+        logging.info('Chart saved: %s', chart_path)
+    except KeyboardInterrupt:
+        raise
+    except Exception:
+        logging.exception('Chart generation failed.')
+        return False
+
+    try:
+        latest_quotes = build_latest_quotes_from_history(settings, history)
+        summary = build_summary(settings, latest_quotes, history)
+    except KeyboardInterrupt:
+        raise
+    except Exception:
+        logging.warning('Summary generation failed; continuing without Discord summary.', exc_info=True)
+        summary = 'Stablecoin monitor chart updated.'
 
     if settings.discord_webhook_url:
-        send_discord(settings.discord_webhook_url, summary, chart_path, settings.request_timeout_seconds)
-        logging.info('Discord notification sent.')
+        try:
+            send_discord(settings.discord_webhook_url, summary, chart_path, settings.request_timeout_seconds)
+            logging.info('Discord notification sent.')
+        except KeyboardInterrupt:
+            raise
+        except Exception:
+            logging.exception('Discord notification failed.')
     else:
         logging.info('DISCORD_WEBHOOK_URL not set. Chart saved locally only.')
 
-    return chart_path, summary
+    return True
 
 
-def run_once(settings: Settings, session: requests.Session) -> tuple[Path, str]:
-    quotes = fetch_data(settings, session)
-    return render_chart(settings, quotes)
+def run_once(settings: Settings, session: requests.Session) -> bool:
+    if not fetch_and_store_snapshot(session, settings):
+        return False
+    return render_and_notify_chart(settings)
 
 
 def parse_args() -> argparse.Namespace:
@@ -617,18 +679,14 @@ def main() -> int:
     run_forever = args.loop or not args.once
     try:
         if not run_forever:
-            chart_path, summary = run_once(settings, session)
-            logging.info('Chart saved: %s', chart_path)
-            print(summary)
+            if not run_once(settings, session):
+                return 1
             return 0
 
         # Initialize schedule boundaries
         now = time.monotonic()
         next_fetch_at = now + settings.fetch_interval_seconds
         next_render_at = now + settings.render_interval_seconds
-
-        # Keep latest successful quotes for render fallback
-        latest_quotes: dict[str, dict[str, Any]] | None = None
 
         logging.info('Starting dual-interval loop. Fetch=%ss, Render=%ss',
                      settings.fetch_interval_seconds, settings.render_interval_seconds)
@@ -639,28 +697,19 @@ def main() -> int:
             while now >= next_fetch_at:
                 next_fetch_at += settings.fetch_interval_seconds
                 try:
-                    quotes = fetch_data(settings, session)
-                    latest_quotes = quotes
-                    logging.info('Fetch completed.')
+                    if fetch_and_store_snapshot(session, settings):
+                        logging.info('Fetch completed.')
                 except KeyboardInterrupt:
                     raise
-                except Exception:
-                    logging.exception('Fetch failed.')
 
             # Process all due render cycles
             while now >= next_render_at:
                 next_render_at += settings.render_interval_seconds
                 try:
-                    if latest_quotes is None:
-                        logging.warning('No quotes available for render, skipping.')
-                        continue
-                    chart_path, summary = render_chart(settings, latest_quotes)
-                    logging.info('Chart saved: %s', chart_path)
-                    print(summary)
+                    if not render_and_notify_chart(settings):
+                        logging.warning('Render task failed.')
                 except KeyboardInterrupt:
                     raise
-                except Exception:
-                    logging.exception('Render failed.')
 
             # Sleep for 1 second to avoid busy loop
             time.sleep(1)
