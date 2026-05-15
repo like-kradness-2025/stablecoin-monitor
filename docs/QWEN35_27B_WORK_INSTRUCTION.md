@@ -1,35 +1,43 @@
-# Qwen3.5-27B向け 作業指示書
+# Arli系モデル向け 作業指示書
 
 対象リポジトリ: `like-kradness-2025/stablecoin-monitor`
 
 対象ブランチ: `feat/v3-refactor-responsibilities`
 
-目的: `stablecoin-monitor v3.00` のCCXT OHLCV版を、比較的小さいモデルでも安全に継続改善できるよう、責務分離・品質確認・敵対的レビューを段階的に進める。
+想定モデル: Arli系の比較的小さめモデル。例: `Qwen3.5-27B`, `GLM-4.7`, `Gemma-4-31B` など。
+
+目的: `stablecoin-monitor v3.00` のCCXT OHLCV版を、**段階的・計画的・サブエージェント分業**で安全に改善する。
+
+この指示書は、単独モデルが勢いで全部直すためのものではない。必ず小さな工程に分け、各工程をサブエージェントに割り当て、レビューゲートを通してから次へ進む。
 
 ---
 
 ## 0. 最重要ルール
 
-あなたはこの作業を、**小さな変更単位で進める保守担当エンジニア**として行う。
+あなたはこの作業を、**保守担当エンジニア兼作業管理者**として行う。
 
 絶対に守ること。
 
 1. 一度に大改造しない。
-2. 既存の実行コマンドを壊さない。
-3. `python stablecoin_monitor.py --once` を入口として維持する。
-4. `python stablecoin_monitor.py --loop` を入口として維持する。
-5. APIキー不要のCCXT public OHLCV方針を維持する。
-6. Proxy CVDをTrue CVDと誤表現しない。
-7. Symbol単位ではなく `exchange:symbol` の `market_key` を監視単位にする。
-8. 取引所ごとの失敗で全体停止させない。
-9. レビューで95点未満なら、必ず改善して再レビューする。
-10. 変更後は必ず「何を変えたか」「なぜ変えたか」「残リスク」を報告する。
+2. 作業は必ずPhaseに分ける。
+3. 実務作業はサブエージェントに分担させる。
+4. 各サブエージェントには狭い責務と明確な成果物だけを渡す。
+5. サブエージェントの出力をそのまま信用しない。
+6. `python stablecoin_monitor.py --once` と `--loop` の入口を維持する。
+7. APIキー不要のCCXT public OHLCV方針を維持する。
+8. Proxy CVDをTrue CVDと誤表現しない。
+9. `market_key = exchange:symbol` を監視単位にする。
+10. 取引所ごとの失敗で全体停止させない。
+11. DB破壊的変更をしない。
+12. READMEと`.env.example`の整合性を壊さない。
+13. pytestでは外部ネットワークを叩かない。
+14. レビューで95点未満なら、必ず改善して再レビューする。
 
 ---
 
 ## 1. 現在の設計前提
 
-現在のv3系は以下の目的を持つ。
+v3.00は以下の流れで動く。
 
 ```text
 CCXT public OHLCV
@@ -45,7 +53,7 @@ Proxy CVDをSQLiteへ保存
 Discord通知または標準出力
 ```
 
-このv3.00は **True CVDではない**。
+これは **True CVDではない**。
 
 ```text
 Proxy CVD = OHLCVから推定した売買圧
@@ -58,12 +66,9 @@ True CVD  = 約定ごとのtaker buy / taker sell累積
 
 ## 2. 現在のモジュール構成
 
-以下の責務分離を維持・強化する。
-
 ```text
 stablecoin_monitor.py        # CLI入口、argparse、loop制御のみ
 stablecoin_monitor/
-  __init__.py
   app.py                     # fetch/store/render/notifyのオーケストレーション
   ccxt_fetcher.py            # CCXT OHLCV取得
   charting.py                # PNG描画
@@ -79,7 +84,7 @@ stablecoin_monitor/
   proxy_cvd.py               # OHLCV → proxy_delta計算
 ```
 
-### 責務境界
+責務境界を守ること。
 
 | モジュール | やってよいこと | やってはいけないこと |
 |---|---|---|
@@ -96,135 +101,115 @@ stablecoin_monitor/
 
 ---
 
-## 3. 作業ゴール
+## 3. サブエージェント分業ルール
 
-今回の作業ゴールは、以下を満たすこと。
+実務は必ずサブエージェントに分担させる。
 
-### 必須ゴール
+| Subagent | 役割 | 触ってよい範囲 | 触ってはいけない範囲 |
+|---|---|---|---|
+| `Planner` | 作業分解、順序設計 | docs, task list | 実装変更 |
+| `TestWriter` | 単体テスト追加 | tests/, requirements.txt | 本体大改造 |
+| `CodeFixer` | 小規模実装修正 | 指定本体1〜2ファイル | 関係ない全体整理 |
+| `Reviewer` | 敵対的レビュー | 差分、テスト結果 | 実装変更 |
+| `DocsMaintainer` | README/docs整合性 | README.md, docs/, .env.example | 本体ロジック |
+| `IntegrationChecker` | compileall, pytest, smoke確認 | 実行確認・ログ整理 | 大規模修正 |
 
-1. モジュール責務がさらに明確になる。
-2. 起動フローが読みやすくなる。
-3. エラー発生箇所がログで特定しやすくなる。
-4. テストしやすい純粋関数が増える。
-5. 小さいモデルでも安全に追加修正できる構造になる。
-6. 既存のREADMEと`.env.example`に矛盾を作らない。
-7. `config/markets.yaml`の市場設定を壊さない。
-
-### 非ゴール
-
-今回やらないこと。
+サブエージェントには必ず以下を渡す。
 
 ```text
-True CVD WebSocket実装
-取引所別private API対応
-売買注文機能
-大規模UI刷新
-DB破壊的migration
-非同期化の全面導入
-バックテスト機能
+- 目的
+- 対象ファイル
+- 禁止事項
+- 成果物
+- 実行すべき確認
+- 報告フォーマット
+```
+
+サブエージェントの出力は、そのまま採用しない。親エージェントが必ず以下を確認する。
+
+```text
+- 指示範囲を超えていないか
+- Proxy CVDをTrue CVDと誤表現していないか
+- market_keyが崩れていないか
+- APIキー必須に戻していないか
+- DB破壊的変更をしていないか
+- テストが外部ネットワークに依存していないか
 ```
 
 ---
 
-## 4. 最初に行う確認
+## 4. Arli系モデル運用ルール
 
-作業前に必ず以下を確認する。
+Arli系モデルは、長い作業で指示逸脱・過剰修正・自己採点の甘さが出やすい前提で運用する。
+
+1回の依頼は短く、狭く、検証可能にする。
+
+悪い依頼:
+
+```text
+全体をいい感じに改善して
+```
+
+良い依頼:
+
+```text
+tests/test_proxy_cvd.py だけ追加してください。
+本体コードは変更しないでください。
+以下の9ケースをpytestで検証してください。
+完了後、変更ファイルと実行結果だけ報告してください。
+```
+
+禁止事項:
+
+```text
+- 自己判断でアーキテクチャを作り替えない
+- 自己判断でWebSocketやTrue CVDを追加しない
+- 自己判断でAPIキー必須設計に戻さない
+- 自己判断でDBスキーマを破壊しない
+- 自己判断でREADMEの仕様を変えない
+- 自己判断でペア一覧を大幅変更しない
+```
+
+サブエージェントにはリポ全体を読ませない。必要最小限だけ渡す。
+
+---
+
+## 5. 推奨Phase計画
+
+### Phase 0: 事前確認
+
+担当: `Planner` + `IntegrationChecker`
 
 ```bash
 git status
 git branch --show-current
+python -m compileall stablecoin_monitor stablecoin_monitor.py
 ```
 
-期待ブランチ:
+完了条件:
 
 ```text
-feat/v3-refactor-responsibilities
-```
-
-もし違うブランチなら作業を止めて、正しいブランチへ切り替える。
-
-```bash
-git checkout feat/v3-refactor-responsibilities
+- ブランチが feat/v3-refactor-responsibilities
+- compileallが通る
+- 失敗があれば内容を記録する
 ```
 
 ---
 
-## 5. 最初に読むファイル
+### Phase 1: proxy_cvd単体テスト追加
 
-順番に読むこと。
+担当: `TestWriter`
+
+対象:
 
 ```text
-README.md
-.env.example
-config/markets.yaml
-stablecoin_monitor.py
-stablecoin_monitor/app.py
-stablecoin_monitor/models.py
-stablecoin_monitor/config.py
-stablecoin_monitor/market_registry.py
-stablecoin_monitor/ccxt_fetcher.py
 stablecoin_monitor/proxy_cvd.py
-stablecoin_monitor/db.py
-stablecoin_monitor/flow.py
-stablecoin_monitor/charting.py
-stablecoin_monitor/notifier.py
-```
-
-読みながら以下をメモする。
-
-```text
-- 実行入口はどこか
-- Settingsはどこで作られるか
-- markets.yamlはどこで検証されるか
-- OHLCV取得はどこか
-- proxy_delta算出はどこか
-- DB保存はどこか
-- flow分類はどこか
-- chart生成はどこか
-- Discord送信はどこか
-```
-
----
-
-## 6. 推奨する作業順序
-
-### Phase A: 静的な構造確認
-
-以下を確認する。
-
-1. import循環がないか。
-2. `models.py` が肥大化しすぎていないか。
-3. `app.py` が低レベル処理を持ちすぎていないか。
-4. `db.py` がビジネス判断を持っていないか。
-5. `charting.py` がflow分類に依存しすぎていないか。
-6. `flow.py` が現在時刻に依存しすぎてテストしづらくないか。
-
-改善候補があれば、1回の変更では最大2ファイルまでにする。
-
----
-
-### Phase B: テスト追加
-
-最低限、以下のテストを追加する。
-
-推奨ディレクトリ:
-
-```text
-tests/
-```
-
-推奨ファイル:
-
-```text
 tests/test_proxy_cvd.py
-tests/test_market_registry.py
-tests/test_flow.py
-tests/test_config.py
 ```
 
-#### test_proxy_cvd.py
+本体変更: 原則なし。
 
-必須ケース。
+必須テスト:
 
 ```text
 1. close > open かつ closeが高値寄り → proxy_delta > 0
@@ -238,9 +223,26 @@ tests/test_config.py
 9. 不正timeframeでConfigError
 ```
 
-#### test_market_registry.py
+確認:
 
-必須ケース。
+```bash
+pytest tests/test_proxy_cvd.py
+```
+
+---
+
+### Phase 2: market_registry単体テスト追加
+
+担当: `TestWriter`
+
+対象:
+
+```text
+stablecoin_monitor/market_registry.py
+tests/test_market_registry.py
+```
+
+必須テスト:
 
 ```text
 1. 正常なmarkets.yamlを読める
@@ -251,9 +253,44 @@ tests/test_config.py
 6. enabled=false市場はenabled_marketsから除外される
 ```
 
-#### test_flow.py
+注意:
 
-必須ケース。
+```text
+tmp_pathで一時YAMLを作る。
+実ファイル config/markets.yaml を直接書き換えない。
+```
+
+確認:
+
+```bash
+pytest tests/test_market_registry.py
+```
+
+---
+
+### Phase 3: flow.pyの時刻注入対応
+
+担当: `CodeFixer` + `TestWriter`
+
+目的: フロー分類テストを安定させる。
+
+対象:
+
+```text
+stablecoin_monitor/flow.py
+tests/test_flow.py
+```
+
+必須変更:
+
+```python
+def category_recent_delta(..., now_utc: datetime | None = None):
+    now_utc = now_utc or datetime.now(UTC)
+```
+
+`classify_flow()` も `now_utc` を受け取れるようにする。
+
+必須テスト:
 
 ```text
 1. btc_stable deltaが閾値超え、fiat_delta >= 0 → BTC_DEMAND
@@ -264,9 +301,26 @@ tests/test_config.py
 6. どれでもない → MIXED
 ```
 
-#### test_config.py
+確認:
 
-必須ケース。
+```bash
+pytest tests/test_flow.py
+```
+
+---
+
+### Phase 4: config単体テスト追加
+
+担当: `TestWriter`
+
+対象:
+
+```text
+stablecoin_monitor/config.py
+tests/test_config.py
+```
+
+必須テスト:
 
 ```text
 1. .envなしでもデフォルトSettingsが作れる
@@ -274,33 +328,172 @@ tests/test_config.py
 3. 相対パスがbase_dir基準でresolveされる
 ```
 
+注意:
+
+```text
+os.environを汚染しない。
+monkeypatchを使う。
+```
+
+確認:
+
+```bash
+pytest tests/test_config.py
+```
+
 ---
 
-### Phase C: 実行確認
+### Phase 5: DB単体テスト追加
 
-以下を実行する。
+担当: `TestWriter`
+
+対象:
+
+```text
+stablecoin_monitor/db.py
+tests/test_db.py
+```
+
+必須テスト:
+
+```text
+1. init_dbでv2互換snapshotsとv3テーブルが作られる
+2. save_ohlcv_barsで1件保存できる
+3. 同じprimary keyでreplaceされる
+4. recompute_proxy_cvdで累積値が正しくなる
+5. prune_dbで古いohlcv_barsを削除できる
+```
+
+注意:
+
+```text
+tmp_path上のSQLiteを使う。
+既存DBを触らない。
+```
+
+確認:
+
+```bash
+pytest tests/test_db.py
+```
+
+---
+
+### Phase 6: CCXT fetcherのmockテスト追加
+
+担当: `TestWriter`
+
+対象:
+
+```text
+stablecoin_monitor/ccxt_fetcher.py
+tests/test_ccxt_fetcher.py
+```
+
+必須方針:
+
+```text
+単体テストで外部ネットワークを叩かない。
+CCXT exchangeはfake/mockにする。
+```
+
+必須テスト:
+
+```text
+1. fetchOHLCV非対応ならskipされる
+2. symbol未対応ならskipされる
+3. 1市場の例外で全体fetchが止まらない
+4. KeyboardInterruptは握りつぶさない
+5. timeframe fallbackが効く
+```
+
+確認:
+
+```bash
+pytest tests/test_ccxt_fetcher.py
+```
+
+---
+
+### Phase 7: README/docs整合性更新
+
+担当: `DocsMaintainer`
+
+対象:
+
+```text
+README.md
+.env.example
+docs/QWEN35_27B_WORK_INSTRUCTION.md
+```
+
+必須内容:
+
+```text
+- stablecoin_monitor.py はCLI入口のみ
+- 実処理は stablecoin_monitor/ 配下へ分割済み
+- Proxy CVDでありTrue CVDではない
+- APIキー不要のCCXT public OHLCV
+- テスト実行方法
+```
+
+---
+
+### Phase 8: 統合確認
+
+担当: `IntegrationChecker`
+
+必須確認:
 
 ```bash
 python -m compileall stablecoin_monitor stablecoin_monitor.py
+pytest
 ```
 
-可能なら実行する。
+可能なら:
 
 ```bash
 python stablecoin_monitor.py --once
 ```
 
-ネットワークや取引所制限で失敗した場合も、以下を確認する。
+`--once`をSKIPできる条件:
 
 ```text
-- ConfigErrorなのか
-- CCXT fetch失敗なのか
-- market未対応なのか
-- DB schema失敗なのか
-- chart生成失敗なのか
+- ネットワーク不可
+- 依存未導入
+- CCXT接続不可
+- 実行環境にmatplotlib backend問題がある
 ```
 
-失敗理由を曖昧に報告しない。
+SKIP時は以下を報告する。
+
+```text
+- SKIP理由
+- 代替確認
+- 人間が実行すべきコマンド
+```
+
+---
+
+## 6. テスト方針
+
+### 6.1 外部ネットワーク禁止
+
+単体テストでは外部ネットワークを叩いてはいけない。
+
+```text
+pytestではCCXTや外部APIへ接続しない。
+CCXT関連はmock/fake exchangeで検証する。
+実API確認はmanual/integrationとして分離する。
+```
+
+### 6.2 pytest依存
+
+pytestを追加する場合は `requirements.txt` に以下を追加する。
+
+```text
+pytest>=8.0
+```
 
 ---
 
@@ -316,9 +509,25 @@ python stablecoin_monitor.py --once
 気持ちよく褒める必要はない。
 ```
 
-### レビュー観点
+### 7.1 レビュー根拠の強制
 
-以下を100点満点で採点する。
+各採点項目には、必ず根拠を書く。
+
+根拠の例:
+
+```text
+- ファイル名
+- 関数名
+- テスト名
+- 実行コマンド結果
+- ログ抜粋
+```
+
+根拠が書けない項目は満点禁止。
+
+95点以上でも、未実行コマンドがある場合はPASS禁止。
+
+### 7.2 レビュー配点
 
 | 観点 | 配点 |
 |---|---:|
@@ -334,7 +543,7 @@ python stablecoin_monitor.py --once
 | README/.env整合性 | 7 |
 | 合計 | 100 |
 
-### 採点基準
+### 7.3 採点基準
 
 ```text
 95-100: かなり安全。小さな残課題のみ。
@@ -344,7 +553,7 @@ python stablecoin_monitor.py --once
 69以下: 失敗。方針から見直し。
 ```
 
-### 95点未満の場合
+### 7.4 95点未満の場合
 
 以下を必ず行う。
 
@@ -355,179 +564,9 @@ python stablecoin_monitor.py --once
 
 ただし、無限ループを避けるため最大3ラウンドまで。
 
-3ラウンド後に95未満なら、以下を報告する。
-
-```text
-- 最終スコア
-- 95に届かない理由
-- 人間判断が必要な点
-- 次にやるべき最小修正
-```
-
 ---
 
-## 8. 敵対的レビューで特に疑うべき点
-
-### 8.1 Proxy CVDの誤表現
-
-悪い例:
-
-```text
-CVDを取得しました
-本物CVDを計算しました
-```
-
-正しい例:
-
-```text
-OHLCV由来のProxy CVDを算出しました
-True CVDではありません
-```
-
----
-
-### 8.2 market_key崩壊
-
-悪い例:
-
-```text
-BTC/USDTだけで保存する
-```
-
-正しい例:
-
-```text
-binance:BTC/USDT
-bybit:BTC/USDT
-okx:BTC/USDT
-```
-
-取引所差を潰さない。
-
----
-
-### 8.3 取引所エラーで全体停止
-
-悪い例:
-
-```python
-for market in markets:
-    bars += fetch_market(market)  # 例外で全停止
-```
-
-正しい例:
-
-```python
-for market in markets:
-    try:
-        bars += fetch_market(market)
-    except Exception:
-        log and continue
-```
-
-ただし `KeyboardInterrupt` は握りつぶさない。
-
----
-
-### 8.4 DB破壊
-
-悪い例:
-
-```sql
-DROP TABLE snapshots;
-```
-
-正しい例:
-
-```text
-v2互換テーブル snapshots は残す
-新規テーブル追加は非破壊
-```
-
----
-
-### 8.5 時刻処理
-
-悪い例:
-
-```text
-JST文字列でDB保存
-```
-
-正しい例:
-
-```text
-DB保存はUTC ISO形式
-表示だけJST
-```
-
----
-
-### 8.6 テスト不能な現在時刻依存
-
-`flow.py` が `datetime.now()` に強く依存している場合、将来的にテストしづらい。
-
-改善候補:
-
-```python
-def category_recent_delta(..., now_utc: datetime | None = None):
-    now_utc = now_utc or datetime.now(UTC)
-```
-
-ただし変更は小さく行う。
-
----
-
-## 9. 推奨する最初の改善タスク
-
-### Task 1: テスト基盤追加
-
-1. `tests/` を作成。
-2. `pytest` を使うなら `requirements.txt` に `pytest>=8.0` を追加。
-3. `test_proxy_cvd.py` を追加。
-4. `test_market_registry.py` を追加。
-5. `test_flow.py` を追加。
-6. `python -m compileall stablecoin_monitor stablecoin_monitor.py` を実行。
-7. `pytest` を実行。
-
-この段階では本体コードの変更を最小限にする。
-
----
-
-### Task 2: flow.py の時刻注入対応
-
-目的:
-
-```text
-フロー分類をテストしやすくする
-```
-
-変更案:
-
-```python
-def category_recent_delta(..., now_utc: datetime | None = None):
-    now_utc = now_utc or datetime.now(UTC)
-    cutoff = now_utc - timedelta(minutes=lookback_minutes)
-```
-
-`classify_flow()` も必要なら `now_utc` を受け取れるようにする。
-
----
-
-### Task 3: READMEにリファクタ後構成を追記
-
-READMEに以下を追加する。
-
-```text
-## 内部構成
-
-stablecoin_monitor.py はCLI入口のみ。
-実処理は stablecoin_monitor/ 配下へ分割。
-```
-
----
-
-## 10. 禁止する変更
+## 8. 禁止する変更
 
 以下は禁止。
 
@@ -547,13 +586,80 @@ stablecoin_monitor.py はCLI入口のみ。
 
 ---
 
-## 11. 出力フォーマット
+## 9. サブエージェント用プロンプトテンプレート
 
-作業完了時は、以下の形式で報告する。
+### Planner用
+
+```text
+あなたはPlannerサブエージェントです。
+対象ブランチは feat/v3-refactor-responsibilities です。
+実装変更はしないでください。
+目的は、現在の作業を小さなPhaseに分解し、各Phaseの対象ファイル・禁止事項・確認コマンドを明確にすることです。
+出力はPhase一覧、依存関係、最初に実行すべきPhaseだけにしてください。
+```
+
+### TestWriter用
+
+```text
+あなたはTestWriterサブエージェントです。
+指定されたテストファイルだけを追加・修正してください。
+本体コードは原則変更禁止です。
+外部ネットワークを叩くテストは禁止です。
+pytestで実行できる単体テストを書いてください。
+変更後、実行コマンドと結果を報告してください。
+```
+
+### CodeFixer用
+
+```text
+あなたはCodeFixerサブエージェントです。
+指定された本体ファイル1〜2個だけを修正してください。
+目的外のリファクタリングは禁止です。
+既存CLI入口、APIキー不要方針、market_key形式、Proxy CVD表現を壊さないでください。
+変更後、compileallと関連pytestを実行してください。
+```
+
+### Reviewer用
+
+```text
+あなたは敵対的Reviewerサブエージェントです。
+実装変更はしないでください。
+差分を壊すつもりで読み、責務分離・実行互換性・テスト品質・DB安全性・Proxy CVD表現・market_key維持を採点してください。
+各採点には必ずファイル名・関数名・テスト名・実行結果などの根拠を書いてください。
+根拠がない満点は禁止です。
+```
+
+### IntegrationChecker用
+
+```text
+あなたはIntegrationCheckerサブエージェントです。
+実装変更はしないでください。
+以下を実行し、結果を記録してください。
+- python -m compileall stablecoin_monitor stablecoin_monitor.py
+- pytest
+- 可能なら python stablecoin_monitor.py --once
+--onceをSKIPする場合は、理由と代替確認を書いてください。
+```
+
+---
+
+## 10. 作業完了時の報告フォーマット
 
 ```markdown
 ## 変更概要
 - ...
+
+## 実行Phase
+- Phase 0: PASS/FAIL
+- Phase 1: PASS/FAIL
+- Phase 2: PASS/FAIL
+
+## 使用したサブエージェント
+- Planner: ...
+- TestWriter: ...
+- CodeFixer: ...
+- Reviewer: ...
+- IntegrationChecker: ...
 
 ## 変更ファイル
 - ...
@@ -566,13 +672,8 @@ stablecoin_monitor.py はCLI入口のみ。
 ## 敵対的レビュー
 ### Round 1
 Score: xx/100
-減点理由:
+根拠:
 - ...
-修正:
-- ...
-
-### Round 2
-Score: xx/100
 減点理由:
 - ...
 修正:
@@ -591,18 +692,21 @@ Score: xx/100
 
 ---
 
-## 12. 作業開始プロンプト
+## 11. 作業開始プロンプト
 
-以下をそのまま作業モデルへ渡してよい。
+以下をそのままArli系モデルへ渡してよい。
 
 ```text
-あなたは stablecoin-monitor v3.00 の保守担当エンジニアです。
+あなたは stablecoin-monitor v3.00 の保守担当エンジニア兼作業管理者です。
 対象リポジトリは like-kradness-2025/stablecoin-monitor、対象ブランチは feat/v3-refactor-responsibilities です。
 
 このブランチは、v3.00 CCXT OHLCV Proxy CVD版を責務分離した状態です。
-あなたの目的は、比較的小さいモデルでも安全に保守できるよう、テスト追加・責務境界確認・小規模改善・敵対的レビューを行い、最終レビューScoreが95/100以上になるまで改善することです。
+あなたの目的は、Arli系の比較的小さいモデルでも安全に保守できるよう、作業を細分化し、サブエージェントを使って、テスト追加・責務境界確認・小規模改善・敵対的レビューを行い、最終レビューScoreが95/100以上になるまで改善することです。
 
 絶対条件:
+- 作業は必ずPhaseに分ける。
+- 実務はサブエージェントに分担させる。
+- 各Phaseの対象ファイル・禁止事項・確認コマンドを明確にする。
 - `python stablecoin_monitor.py --once` と `--loop` の入口を維持する。
 - APIキー不要のCCXT public OHLCV方針を維持する。
 - Proxy CVDをTrue CVDと呼ばない。
@@ -611,11 +715,13 @@ Score: xx/100
 - 取引所ごとの失敗で全体停止させない。
 - DB破壊的変更をしない。
 - READMEと.env.exampleの整合性を壊さない。
+- pytestでは外部ネットワークを叩かない。
 
 最初に以下を読む:
 README.md
 .env.example
 config/markets.yaml
+docs/QWEN35_27B_WORK_INSTRUCTION.md
 stablecoin_monitor.py
 stablecoin_monitor/app.py
 stablecoin_monitor/models.py
@@ -628,35 +734,41 @@ stablecoin_monitor/flow.py
 stablecoin_monitor/charting.py
 stablecoin_monitor/notifier.py
 
-最初の推奨タスク:
-1. tests/ を作成する。
-2. proxy_cvd / market_registry / flow / config の単体テストを追加する。
-3. 必要なら pytest を requirements.txt に追加する。
-4. `python -m compileall stablecoin_monitor stablecoin_monitor.py` を実行する。
-5. `pytest` を実行する。
-6. 変更後、敵対的レビューを100点満点で行う。
-7. Scoreが95未満なら、減点理由を修正して再レビューする。
-8. 最大3ラウンドまで継続する。
-9. 最終結果を指定フォーマットで報告する。
+最初の推奨Phase:
+Phase 0: 現在ブランチとcompileall確認
+Phase 1: proxy_cvd単体テスト追加
+Phase 2: market_registry単体テスト追加
+Phase 3: flow.pyのnow_utc注入とflow単体テスト追加
+Phase 4: config単体テスト追加
+Phase 5: db単体テスト追加
+Phase 6: ccxt_fetcherのmockテスト追加
+Phase 7: README/docs整合性更新
+Phase 8: 統合確認
 
 レビュー配点:
 実行互換性15、責務分離15、設定・YAML検証10、CCXT失敗耐性10、Proxy CVD計算10、DB安全性10、フロー分類8、テスト容易性8、ログ・運用性7、README/.env整合性7。
 
+各採点には必ず根拠を書くこと。
+根拠がない満点は禁止。
+95点以上でも未実行コマンドがある場合はPASS禁止。
+
 作業完了時は以下を出力する:
-変更概要、変更ファイル、実行した確認、敵対的レビュー各Round、Final Score、残リスク、次の推奨作業。
+変更概要、実行Phase、使用したサブエージェント、変更ファイル、実行した確認、敵対的レビュー各Round、Final Score、残リスク、次の推奨作業。
 ```
 
 ---
 
-## 13. 期待する最終状態
-
-最低限、以下なら合格。
+## 12. 期待する最終状態
 
 ```text
+- 作業がPhase単位で報告されている
+- サブエージェントの役割と成果が報告されている
 - テストが追加されている
 - proxy_deltaの符号テストがある
 - markets.yaml validationのテストがある
 - flow分類のテストがある
+- DB層のテストがある
+- CCXT fetcherのmockテストがある
 - compileallが通る
 - pytestが通る
 - 責務境界が維持されている
