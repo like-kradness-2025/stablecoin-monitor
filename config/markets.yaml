@@ -1,0 +1,113 @@
+version: 3
+
+markets:
+  # BTC / stable pairs
+  - market_key: binance:BTC/USDT
+    exchange: binance
+    symbol: BTC/USDT
+    base: BTC
+    quote: USDT
+    category: btc_stable
+    priority: 1
+    enabled: true
+
+  - market_key: binance:BTC/FDUSD
+    exchange: binance
+    symbol: BTC/FDUSD
+    base: BTC
+    quote: FDUSD
+    category: btc_stable
+    priority: 2
+    enabled: true
+
+  - market_key: binance:BTC/USDC
+    exchange: binance
+    symbol: BTC/USDC
+    base: BTC
+    quote: USDC
+    category: btc_stable
+    priority: 3
+    enabled: true
+
+  - market_key: bybit:BTC/USDT
+    exchange: bybit
+    symbol: BTC/USDT
+    base: BTC
+    quote: USDT
+    category: btc_stable
+    priority: 4
+    enabled: true
+
+  - market_key: okx:BTC/USDT
+    exchange: okx
+    symbol: BTC/USDT
+    base: BTC
+    quote: USDT
+    category: btc_stable
+    priority: 5
+    enabled: true
+
+  - market_key: coinbase:BTC/USDC
+    exchange: coinbase
+    symbol: BTC/USDC
+    base: BTC
+    quote: USDC
+    category: btc_stable
+    priority: 6
+    enabled: true
+
+  # Stable / fiat pairs
+  - market_key: coinbase:USDC/USD
+    exchange: coinbase
+    symbol: USDC/USD
+    base: USDC
+    quote: USD
+    category: stable_fiat
+    priority: 20
+    enabled: true
+
+  - market_key: kraken:USDT/USD
+    exchange: kraken
+    symbol: USDT/USD
+    base: USDT
+    quote: USD
+    category: stable_fiat
+    priority: 21
+    enabled: true
+
+  - market_key: kraken:USDC/USD
+    exchange: kraken
+    symbol: USDC/USD
+    base: USDC
+    quote: USD
+    category: stable_fiat
+    priority: 22
+    enabled: true
+
+  - market_key: kraken:USDT/EUR
+    exchange: kraken
+    symbol: USDT/EUR
+    base: USDT
+    quote: EUR
+    category: stable_fiat
+    priority: 23
+    enabled: true
+
+  # Stable / stable pairs
+  - market_key: binance:FDUSD/USDT
+    exchange: binance
+    symbol: FDUSD/USDT
+    base: FDUSD
+    quote: USDT
+    category: stable_cross
+    priority: 40
+    enabled: true
+
+  - market_key: binance:USDC/USDT
+    exchange: binance
+    symbol: USDC/USDT
+    base: USDC
+    quote: USDT
+    category: stable_cross
+    priority: 41
+    enabled: true
