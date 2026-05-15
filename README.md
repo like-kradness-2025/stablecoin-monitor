@@ -1,37 +1,92 @@
-# stablecoin_monitor_rebuilt
+# stablecoin-monitor v3.00
 
-CoinMarketCap の API キーを入れるだけで動く、ステーブルコイン監視ツールです。
+CCXT の public OHLCV を横断取得し、取引所単位ペアの **Proxy CVD** を監視するステーブル資金フローツールです。
 
-## 何が変わったか
+v2.20 の「1分取得 / 5分描画」構造を引き継ぎつつ、取得元を CoinMarketCap quotes から CCXT OHLCV に変更しています。
 
-- **必須設定は `CMC_API_KEY` だけ**
-- **Binance 依存を削除**
-- **ローカル SQLite に履歴保存**
-- **履歴からチャート生成**
-- **Discord 通知は任意**
+## v3.00 の目的
 
-つまり、最小構成ではこうです。
+ステーブル出来高が増えたときに、以下をざっくり分類します。
 
-1. API キーを取る
-2. `.env` に入れる
-3. 実行する
+- フィアットからステーブルへ流入しているのか
+- ステーブル間で通貨変換しているのか
+- ステーブルが BTC 買いに向かっているのか
+- BTC からステーブルへ逃げているのか
+- ステーブルからフィアットへ抜けているのか
+
+本物の約定CVDではなく、OHLCVから推定した **Proxy CVD** です。
+
+## 重要な注意
+
+v3.00 の CVD は近似です。
+
+```text
+Proxy CVD = OHLCV の足方向・終値位置・出来高から推定した売買圧
+True CVD  = 約定ごとの taker buy / taker sell を累積したもの
+```
+
+そのため、v3.00 は広域レーダーとして使います。吸収・売り枯れ・踏み上げの精密検出は、将来の True CVD 実装で扱います。
+
+## APIキー
+
+デフォルト構成では不要です。
+
+CCXT の public OHLCV を使うため、取引所APIキーも CMC APIキーも不要です。
+
+Discord通知を使う場合のみ `DISCORD_WEBHOOK_URL` を設定してください。
 
 ## 監視対象
 
-デフォルト:
+監視対象は `config/markets.yaml` で管理します。
 
-- BTC
-- USDT
-- USDC
-- FDUSD
+監視キーは以下です。
 
-必要なら `.env` の `STABLE_SYMBOLS` を変えるだけです。
+```text
+market_key = exchange:symbol
+例: binance:BTC/FDUSD
+```
+
+カテゴリは以下です。
+
+| category | 意味 |
+|---|---|
+| `btc_stable` | BTC とステーブルのペア。BTC需要/逃避を見る |
+| `stable_fiat` | ステーブルとフィアットのペア。流入/出口を見る |
+| `stable_cross` | ステーブル同士のペア。通貨変換を見る |
+| `other` | その他 |
+
+## デフォルト監視ペア
+
+### BTC / Stable
+
+```text
+binance:BTC/USDT
+binance:BTC/FDUSD
+binance:BTC/USDC
+bybit:BTC/USDT
+okx:BTC/USDT
+coinbase:BTC/USDC
+```
+
+### Stable / Fiat
+
+```text
+coinbase:USDC/USD
+kraken:USDT/USD
+kraken:USDC/USD
+kraken:USDT/EUR
+```
+
+### Stable / Stable
+
+```text
+binance:FDUSD/USDT
+binance:USDC/USDT
+```
 
 ## セットアップ
 
-### 1. 仮想環境を作る
-
-#### Windows PowerShell
+### Windows PowerShell
 
 ```powershell
 python -m venv .venv
@@ -39,7 +94,7 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-#### Linux / macOS / WSL / Termux
+### Linux / macOS / WSL / Termux
 
 ```bash
 python -m venv .venv
@@ -47,19 +102,15 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. `.env` を作る
+## `.env` 作成
 
-`.env.example` を `.env` にコピーして、`CMC_API_KEY` を入れてください。
-
-```env
-CMC_API_KEY=your_coinmarketcap_api_key
-FETCH_INTERVAL_SECONDS=60
-RENDER_INTERVAL_SECONDS=300
+```bash
+cp .env.example .env
 ```
 
-`POLL_INTERVAL_SECONDS` は後方互換用の legacy 設定です。基本は `FETCH_INTERVAL_SECONDS` / `RENDER_INTERVAL_SECONDS` を使ってください。
+最小構成では編集なしでも動きます。
 
-Discord 通知も使うならこれも入れます。
+Discord通知を使う場合だけ以下を入れます。
 
 ```env
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
@@ -67,7 +118,7 @@ DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
 
 ## 実行
 
-### 1 回だけ実行
+### 1回だけ実行
 
 ```bash
 python stablecoin_monitor.py --once
@@ -75,116 +126,75 @@ python stablecoin_monitor.py --once
 
 ### 常駐実行
 
-`--loop` モードでは、**データ取得を 1 分ごと**、**チャート生成を 5 分ごと**に行います。
-
-- データは 1 分ごとに取得・保存されます
-- チャートは 5 分ごとに生成されます
-
 ```bash
 python stablecoin_monitor.py --loop
 ```
 
-環境変数で間隔を変更できます:
+`--loop` では以下の周期で動きます。
 
-```env
-FETCH_INTERVAL_SECONDS=60
-RENDER_INTERVAL_SECONDS=300
-```
+- OHLCV取得: 60秒ごと
+- チャート生成: 300秒ごと
 
-## 出力
-
-- DB: `data/stablecoin_monitor.db`
-- 画像: `output/stablecoin_monitor_YYYYMMDD_HHMMSS.png`
-
-## チャート内容（v2.00）
-
-ダークテーマのダッシュボード風レイアウトです。
-
-### 構造図
-
-```
-┌─────────────────────────────────────────────────────┐
-│  BTC $81,xxx | USDT -x.xbp | USDC -x.xbp | FDUSD -x.xbp │  ← 最新値サマリー
-├─────────────────────────────────────────────────────┤
-│                    Stablecoin Monitor                │
-│              BTC 価格チャート（全幅）                   │
-├─────────────────────────────────────────────────────┤
-│  USDT Deviation  │  USDC Deviation  │  FDUSD Deviation │  ← 横 1x3 カード
-├──────────────────┼───────────────────┼──────────────────┤
-│ USDT 24h volume │ USDC 24h volume  │ FDUSD 24h volume │  ← 横 1x3 カード
-└──────────────────┴───────────────────┴──────────────────┘
-                        右下：日時表示（JST）
-```
-
-### 詳細仕様
-
-**全体サイズ:** `figsize=(7, 5)`
-
-**高さ比率:** `[1.5, 0.6, 0.6]`（上段：中段：下段）
-
-| セクション | 内容 | 備考 |
-|-----------|------|------|
-| 上段 | BTC 価格チャート | 全幅、オレンジ色 |
-| 中段 | 乖離率（bp） | 横 1x3 カード、USDT/USDC/FDUSD |
-| 下段 | 24h 出来高 | 横 1x3 カード、USDT/USDC/FDUSD |
-
-**配色:**
-- USDT: 緑色
-- USDC: 青色
-- FDUSD: オレンジ色
-
-**ラベル:**
-- 中段・下段の Y 軸単位ラベルは省略（視認性向上）
-- 上段・中段の X 軸ラベルは省略（重複回避）
-- 下段の X 軸は右端カードのみ表示
-
-**日時:**
-- 右下に JST 形式の日時表示
-
-## アラート
-
-`DEVIATION_ALERT_BP` を超えたら、要約文に `ALERT` が出力されます。
-
-例:
-
-```text
-ALERT: USDT -18.2bp, FDUSD +25.4bp
-```
-
-## 環境変数設定
-
-`.env` ファイルに以下を設定できます。
+## 主な環境変数
 
 | 変数名 | 説明 | デフォルト |
-|--------|------|-----------|
-| `CMC_API_KEY` | CoinMarketCap API キー（必須） | - |
-| `DISCORD_WEBHOOK_URL` | Discord Webhook URL（任意） | 未設定 |
-| `DB_PATH` | SQLite データベースの保存先 | `data/stablecoin_monitor.db` |
-| `OUTPUT_DIR` | 画像の保存先ディレクトリ | `output` |
-| `POLL_INTERVAL_SECONDS` | 監視間隔（秒、後方互換用） | `300`（5 分） |
-| `FETCH_INTERVAL_SECONDS` | データ取得間隔（秒） | `60`（1 分） |
-| `RENDER_INTERVAL_SECONDS` | チャート生成間隔（秒） | `300`（5 分） |
-| `HISTORY_DAYS` | チャートに表示する履歴期間（日） | `3` |
-| `RETENTION_DAYS` | データベースの保持期間（日） | `30` |
-| `BTC_SYMBOL` | BTC のシンボル | `BTC` |
-| `STABLE_SYMBOLS` | 監視対象ステーブルコイン（カンマ区切り） | `USDT,USDC,FDUSD` |
-| `DEVIATION_ALERT_BP` | アラート閾値（bp） | `15` |
-| `REQUEST_TIMEOUT_SECONDS` | API リクエストのタイムアウト（秒） | `20` |
+|---|---|---|
+| `DISCORD_WEBHOOK_URL` | Discord Webhook URL | 未設定 |
+| `DB_PATH` | SQLite DB保存先 | `data/stablecoin_monitor.db` |
+| `OUTPUT_DIR` | PNG出力先 | `output` |
+| `MARKETS_CONFIG_PATH` | 監視ペア設定 | `config/markets.yaml` |
+| `OHLCV_TIMEFRAME` | CCXT OHLCV時間足 | `1m` |
+| `OHLCV_LIMIT` | 取得本数 | `120` |
+| `FETCH_INTERVAL_SECONDS` | 取得周期 | `60` |
+| `RENDER_INTERVAL_SECONDS` | 描画周期 | `300` |
+| `HISTORY_DAYS` | 描画履歴日数 | `1` |
+| `RETENTION_DAYS` | DB保持日数 | `30` |
+| `REQUEST_TIMEOUT_SECONDS` | APIタイムアウト | `20` |
+| `FLOW_DELTA_THRESHOLD_QUOTE` | フロー分類の閾値 | `1000000` |
 
-## PR運用
+## DB出力
 
-このリポジトリは、変更を push したあとに PR で確認してから取り込む運用にします。
+v3.00 では以下のテーブルを使います。
 
-## 注意点
+| table | 用途 |
+|---|---|
+| `market_pairs` | 監視ペアのマスタ |
+| `ohlcv_bars` | OHLCV + proxy_delta + proxy_cvd |
+| `snapshots` | v2互換用。v3では主役ではない |
 
-- CoinMarketCap の `v2/cryptocurrency/quotes/latest` を使っています。
-- `symbol` 指定では同一シンボル候補が複数返ることがあるため、スクリプト側で **順位と時価総額を見て最有力候補を選ぶ** 形にしています。
-- Discord webhook は任意です。未設定ならローカル保存だけ行います。
+## チャート内容
 
-## すぐ使うための最短手順
+出力ファイル例:
 
-```bash
-cp .env.example .env
-# .env を開いて CMC_API_KEY だけ入れる
-python stablecoin_monitor.py --once
+```text
+output/stablecoin_monitor_v3_YYYYMMDD_HHMMSS.png
 ```
+
+パネル構成:
+
+```text
+Panel 1: BTC価格
+Panel 2: BTC/stable Proxy CVD
+Panel 3: stable/fiat Proxy CVD
+Panel 4: stable/stable Proxy CVD
+```
+
+## シグナル分類
+
+Discord本文または標準出力に以下のようなシグナルを出します。
+
+| Signal | 意味 |
+|---|---|
+| `BTC_DEMAND` | ステーブル資金がBTCへ向かうバイアス |
+| `STABLE_INFLOW` | フィアットからステーブル流入、BTC反応は弱い |
+| `STABLE_ROTATION` | ステーブル間の乗り換え需要 |
+| `BTC_RISK_OFF` | BTCからステーブルへ逃避 |
+| `FIAT_EXIT` | BTC売りとフィアット出口が同時に強い |
+| `MIXED` | 混在。断定しない |
+
+## 次の拡張候補
+
+- Binance True CVD receiver
+- Proxy CVD と True CVD の乖離検証
+- Top出来高ペアの自動選定
+- Bybit / OKX / Coinbase のTrue CVD追加
