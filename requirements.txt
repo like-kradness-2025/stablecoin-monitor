@@ -1,2 +1,4 @@
 matplotlib>=3.8
 requests>=2.31
+ccxt>=4.4
+PyYAML>=6.0
