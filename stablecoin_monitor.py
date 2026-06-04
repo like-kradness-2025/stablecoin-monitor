@@ -421,7 +421,7 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
     settings.output_dir.mkdir(parents=True, exist_ok=True)
     chart_path = settings.output_dir / f"stablecoin_monitor_{now_utc.astimezone(JST).strftime('%Y%m%d_%H%M%S')}.png"
 
-    fig = plt.figure(figsize=(14, 20))
+    fig = plt.figure(figsize=(14, 14))
     fig.patch.set_facecolor('#07111f')
 
     all_symbols = [settings.btc_symbol, *settings.stable_symbols]
