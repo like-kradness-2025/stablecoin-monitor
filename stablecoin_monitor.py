@@ -477,6 +477,10 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
     formatter = mdates.DateFormatter('%m-%d %H:%M', tz=JST)
     symbol_blocks: list[tuple[Any, Any, str]] = []
 
+    # Bar width per period based on data spacing
+    period_bar_widths = {'1day': 0.0025, '1week': 0.015, '1mo': 0.058}
+    bar_width = period_bar_widths.get(period, 0.0025)
+
     for asset_idx, (symbol, color) in enumerate(zip(all_symbols, colors)):
         rows = history.get(symbol, [])
         is_btc = symbol == settings.btc_symbol
@@ -553,7 +557,7 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
             )
 
             y_mcap = [row['market_cap_usd'] / 1_000_000_000 for row in rows]
-            ax_mcap.bar(x, y_mcap, width=0.0025, color=color, alpha=0.5, zorder=2)
+            ax_mcap.bar(x, y_mcap, width=bar_width, color=color, alpha=0.5, zorder=2)
             mcap_min = min(y_mcap)
             mcap_max = max(y_mcap)
             mcap_range = mcap_max - mcap_min
