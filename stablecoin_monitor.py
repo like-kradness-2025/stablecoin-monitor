@@ -32,6 +32,11 @@ DEFAULT_INTERVAL_SECONDS = 300
 DEFAULT_HISTORY_DAYS = 1
 DEFAULT_RETENTION_DAYS = 30
 DEFAULT_ALERT_BP = 15.0
+PERIOD_MAP: dict[str, int] = {
+    '1day': 1,
+    '1week': 7,
+    '1mo': 30,
+}
 
 
 @dataclass(slots=True)
@@ -416,10 +421,10 @@ def apply_dashboard_theme() -> None:
     })
 
 
-def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now_utc: datetime) -> Path:
+def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now_utc: datetime, period: str = '1day') -> Path:
     apply_dashboard_theme()
     settings.output_dir.mkdir(parents=True, exist_ok=True)
-    chart_path = settings.output_dir / f"stablecoin_monitor_{now_utc.astimezone(JST).strftime('%Y%m%d_%H%M%S')}.png"
+    chart_path = settings.output_dir / f"stablecoin_monitor_{period}_{now_utc.astimezone(JST).strftime('%Y%m%d_%H%M%S')}.png"
 
     fig = plt.figure(figsize=(14, 14))
     fig.patch.set_facecolor('#07111f')
@@ -675,11 +680,21 @@ def fetch_and_store_snapshot(session: requests.Session, settings: Settings) -> b
         return False
 
 
-def render_and_notify_chart(settings: Settings) -> bool:
+def resolve_period_webhook(settings: Settings, period: str) -> str | None:
+    """Return period-specific webhook or fallback to default."""
+    env_key = f'DISCORD_WEBHOOK_{period.upper()}'
+    return os.getenv(env_key) or settings.discord_webhook_url
+
+
+def render_and_notify_chart(settings: Settings, period: str = '1day') -> bool:
     """Load history, render the chart, and notify Discord if configured."""
     try:
         symbols = (settings.btc_symbol, *settings.stable_symbols)
-        history = load_history(settings.db_path, settings.history_days, symbols)
+        days = PERIOD_MAP.get(period)
+        if days is None:
+            days = settings.history_days
+            logging.warning('Unknown period %s, falling back to history_days=%s', period, days)
+        history = load_history(settings.db_path, days, symbols)
     except KeyboardInterrupt:
         raise
     except Exception:
@@ -688,7 +703,7 @@ def render_and_notify_chart(settings: Settings) -> bool:
 
     try:
         ts_utc = datetime.now(UTC).replace(microsecond=0)
-        chart_path = make_chart(settings, history, ts_utc)
+        chart_path = make_chart(settings, history, ts_utc, period)
         logging.info('Chart saved: %s', chart_path)
     except KeyboardInterrupt:
         raise
@@ -705,9 +720,10 @@ def render_and_notify_chart(settings: Settings) -> bool:
         logging.warning('Summary generation failed; continuing without Discord summary.', exc_info=True)
         summary = 'Stablecoin monitor chart updated.'
 
-    if settings.discord_webhook_url:
+    webhook_url = resolve_period_webhook(settings, period)
+    if webhook_url:
         try:
-            send_discord(settings.discord_webhook_url, summary, chart_path, settings.request_timeout_seconds)
+            send_discord(webhook_url, summary, chart_path, settings.request_timeout_seconds)
             logging.info('Discord notification sent.')
         except KeyboardInterrupt:
             raise
@@ -719,16 +735,18 @@ def render_and_notify_chart(settings: Settings) -> bool:
     return True
 
 
-def run_once(settings: Settings, session: requests.Session) -> bool:
+def run_once(settings: Settings, session: requests.Session, period: str = '1day') -> bool:
     if not fetch_and_store_snapshot(session, settings):
         return False
-    return render_and_notify_chart(settings)
+    return render_and_notify_chart(settings, period)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Stablecoin monitor using CoinMarketCap + local SQLite history.')
     parser.add_argument('--once', action='store_true', help='Run one cycle and exit.')
     parser.add_argument('--loop', action='store_true', help='Run forever at the configured interval.')
+    parser.add_argument('--period', choices=['1day', '1week', '1mo'], default='1day',
+                        help='Time frame for chart data (--once only; --loop processes all periods). Default: 1day')
     parser.add_argument('--log-level', default=os.getenv('LOG_LEVEL', 'INFO'), help='Logging level. Default: INFO')
     return parser.parse_args()
 
@@ -755,7 +773,7 @@ def main() -> int:
     run_forever = args.loop or not args.once
     try:
         if not run_forever:
-            if not run_once(settings, session):
+            if not run_once(settings, session, period=args.period):
                 return 1
             return 0
 
@@ -764,8 +782,9 @@ def main() -> int:
         next_fetch_at = now + settings.fetch_interval_seconds
         next_render_at = now + settings.render_interval_seconds
 
-        logging.info('Starting dual-interval loop. Fetch=%ss, Render=%ss',
-                     settings.fetch_interval_seconds, settings.render_interval_seconds)
+        periods = ['1day', '1week', '1mo']
+        logging.info('Starting multi-timeframe loop. Fetch=%ss, Render=%ss, Periods=%s',
+                     settings.fetch_interval_seconds, settings.render_interval_seconds, periods)
         while True:
             now = time.monotonic()
 
@@ -782,8 +801,9 @@ def main() -> int:
             while now >= next_render_at:
                 next_render_at += settings.render_interval_seconds
                 try:
-                    if not render_and_notify_chart(settings):
-                        logging.warning('Render task failed.')
+                    for period in periods:
+                        if not render_and_notify_chart(settings, period):
+                            logging.warning('Render task failed for period %s.', period)
                 except KeyboardInterrupt:
                     raise
 
