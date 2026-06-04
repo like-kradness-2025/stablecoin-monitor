@@ -457,8 +457,6 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
         else:
             line_label = f'{symbol} Depeg (bp)'
             ax_line.yaxis.set_major_formatter(mticker.FuncFormatter(lambda v, _: f'{v:+.1f}'))
-            ax_line.axhline(0, color='#60a5fa', lw=0.8, alpha=0.5, linestyle='--')
-
         if rows:
             x = [row['ts_utc'].astimezone(JST) for row in rows]
 
@@ -466,19 +464,24 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
                 y_values = [row['price_usd'] for row in rows]
             else:
                 y_values = [(row['price_usd'] - 1.0) * 10000.0 for row in rows]
+                # Baseline = avg of first N data points (N=5, ~5min at 1min res)
+                n_baseline = min(5, len(y_values))
+                baseline_bp = sum(y_values[:n_baseline]) / n_baseline if n_baseline > 0 else 0
                 y_min = min(y_values)
                 y_max = max(y_values)
                 y_range = y_max - y_min
-                padding = y_range * 0.1 if y_range > 0 else 1.0
+                padding = y_range * 0.15 if y_range > 0 else 1.0
                 ax_line.set_ylim(y_min - padding, y_max + padding)
+                # Baseline reference line
+                ax_line.axhline(baseline_bp, color=color, lw=0.8, alpha=0.5, linestyle='--')
 
             ax_line.plot(x, y_values, linewidth=1.8, color=color, zorder=3)
-            # Fill depeg regions: negative=red, positive=green (90% transparency)
+            # Fill depeg regions relative to baseline (90% transparency)
             if not is_btc:
-                ax_line.fill_between(x, 0, y_values, where=[v < 0 for v in y_values],
-                                      color='red', alpha=0.1, zorder=2)
-                ax_line.fill_between(x, 0, y_values, where=[v >= 0 for v in y_values],
-                                      color='green', alpha=0.1, zorder=2)
+                ax_line.fill_between(x, baseline_bp, y_values, where=[v < baseline_bp for v in y_values],
+                                      color='red', alpha=0.2, zorder=2)
+                ax_line.fill_between(x, baseline_bp, y_values, where=[v >= baseline_bp for v in y_values],
+                                      color='green', alpha=0.2, zorder=2)
 
             # Price label at top-right for all symbols
             if is_btc:
