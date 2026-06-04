@@ -54,7 +54,6 @@ class Settings:
     btc_symbol: str
     deviation_alert_bp: float
     request_timeout_seconds: int
-    discord_enabled: bool = True
 
 
 class ConfigError(RuntimeError):
@@ -137,7 +136,6 @@ def load_settings(base_dir: Path) -> Settings:
         btc_symbol=btc_symbol,
         deviation_alert_bp=env_float('DEVIATION_ALERT_BP', DEFAULT_ALERT_BP),
         request_timeout_seconds=env_int('REQUEST_TIMEOUT_SECONDS', 20),
-        discord_enabled=os.getenv('DISCORD_ENABLED', 'true').strip().lower() in ('true', '1', 'yes'),
     )
 
 
@@ -765,7 +763,7 @@ def render_and_notify_chart(settings: Settings, period: str = '1day') -> bool:
         summary = 'Stablecoin monitor chart updated.'
 
     webhook_url = resolve_period_webhook(settings, period)
-    if webhook_url and settings.discord_enabled:
+    if webhook_url:
         try:
             send_discord(webhook_url, summary, chart_path, settings.request_timeout_seconds)
             logging.info('Discord notification sent.')
@@ -791,8 +789,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--loop', action='store_true', help='Run forever at the configured interval.')
     parser.add_argument('--period', choices=['1day', '1week', '1mo'], default='1day',
                         help='Time frame for chart data (--once only; --loop processes all periods). Default: 1day')
-    parser.add_argument('--no-discord', action='store_true',
-                        help='Suppress Discord notification even if webhook is configured.')
     parser.add_argument('--log-level', default=os.getenv('LOG_LEVEL', 'INFO'), help='Logging level. Default: INFO')
     return parser.parse_args()
 
@@ -808,9 +804,6 @@ def main() -> int:
 
     try:
         settings = load_settings(base_dir)
-        if args.no_discord:
-            settings.discord_enabled = False
-            logging.info('Discord notifications disabled by --no-discord.')
     except ConfigError as exc:
         logging.error(str(exc))
         return 2
