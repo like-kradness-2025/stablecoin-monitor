@@ -446,7 +446,9 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
         block_facecolor = '#0d1626' if asset_idx % 2 == 0 else '#101b2e'
         ax_line.set_facecolor(block_facecolor)
         ax_mcap.set_facecolor(block_facecolor)
-        ax_line.text(0.02, 0.95, symbol, transform=ax_line.transAxes, fontsize=28, fontweight='bold', color=color, va='top', ha='left', zorder=10)
+        ax_line.margins(x=0)
+        ax_mcap.margins(x=0)
+        ax_line.text(0.02, 0.95, symbol, transform=ax_line.transAxes, fontsize=32, fontweight='bold', color=color, va='top', ha='left', zorder=10)
         symbol_blocks.append((ax_line, ax_mcap, color))
 
         if is_btc:
@@ -471,10 +473,12 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
                 ax_line.set_ylim(y_min - padding, y_max + padding)
 
             ax_line.plot(x, y_values, linewidth=1.8, color=color, zorder=3)
-            # Fill negative depeg region in red (70% opacity)
+            # Fill depeg regions: negative=red, positive=green (90% transparency)
             if not is_btc:
                 ax_line.fill_between(x, 0, y_values, where=[v < 0 for v in y_values],
-                                      color='red', alpha=0.3, zorder=2)
+                                      color='red', alpha=0.1, zorder=2)
+                ax_line.fill_between(x, 0, y_values, where=[v >= 0 for v in y_values],
+                                      color='green', alpha=0.1, zorder=2)
 
             # Price label at top-right for all symbols
             if is_btc:
@@ -491,7 +495,7 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
                 transform=ax_line.transAxes,
                 ha='right',
                 va='top',
-                fontsize=16,
+                fontsize=32,
                 fontweight='bold',
                 color=price_color,
                 bbox={
