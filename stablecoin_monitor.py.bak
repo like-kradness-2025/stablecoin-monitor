@@ -15,9 +15,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
 from matplotlib.collections import LineCollection
-from matplotlib.patches import Rectangle
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -41,8 +39,6 @@ class Settings:
     db_path: Path
     output_dir: Path
     poll_interval_seconds: int
-    fetch_interval_seconds: int
-    render_interval_seconds: int
     history_days: int
     retention_days: int
     stable_symbols: tuple[str, ...]
@@ -112,19 +108,12 @@ def load_settings(base_dir: Path) -> Settings:
     if btc_symbol in stable_symbols:
         raise ConfigError('BTC_SYMBOL must not also be inside STABLE_SYMBOLS')
 
-    # Backward compatibility: use POLL_INTERVAL_SECONDS if new intervals not set
-    poll_interval = env_int('POLL_INTERVAL_SECONDS', DEFAULT_INTERVAL_SECONDS)
-    fetch_interval = env_int('FETCH_INTERVAL_SECONDS', poll_interval)
-    render_interval = env_int('RENDER_INTERVAL_SECONDS', poll_interval)
-
     return Settings(
         cmc_api_key=cmc_api_key,
         discord_webhook_url=(os.getenv('DISCORD_WEBHOOK_URL') or '').strip() or None,
         db_path=db_path,
         output_dir=output_dir,
-        poll_interval_seconds=poll_interval,
-        fetch_interval_seconds=fetch_interval,
-        render_interval_seconds=render_interval,
+        poll_interval_seconds=env_int('POLL_INTERVAL_SECONDS', DEFAULT_INTERVAL_SECONDS),
         history_days=env_int('HISTORY_DAYS', DEFAULT_HISTORY_DAYS),
         retention_days=env_int('RETENTION_DAYS', DEFAULT_RETENTION_DAYS),
         stable_symbols=stable_symbols,
@@ -149,20 +138,9 @@ def build_session() -> requests.Session:
     return session
 
 
-def get_db_connection(db_path: Path, read_only: bool = False) -> sqlite3.Connection:
-    """Create a SQLite connection with optimized PRAGMAs for the monitor."""
-    if read_only:
-        conn = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
-    else:
-        conn = sqlite3.connect(db_path)
-    conn.execute('PRAGMA journal_mode=WAL')
-    conn.execute('PRAGMA synchronous=NORMAL')
-    conn.execute('PRAGMA busy_timeout=5000')
-    return conn
-
 def init_db(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    with get_db_connection(db_path) as conn:
+    with sqlite3.connect(db_path) as conn:
         conn.execute(
             '''
             CREATE TABLE IF NOT EXISTS snapshots (
@@ -257,7 +235,7 @@ def save_snapshot(db_path: Path, ts_utc: datetime, quotes: dict[str, dict[str, A
         )
         for symbol, payload in quotes.items()
     ]
-    with get_db_connection(db_path) as conn:
+    with sqlite3.connect(db_path) as conn:
         conn.executemany(
             '''
             INSERT OR REPLACE INTO snapshots
@@ -271,7 +249,7 @@ def save_snapshot(db_path: Path, ts_utc: datetime, quotes: dict[str, dict[str, A
 
 def prune_db(db_path: Path, retention_days: int) -> int:
     cutoff = datetime.now(UTC) - timedelta(days=retention_days)
-    with get_db_connection(db_path, read_only=False) as conn:
+    with sqlite3.connect(db_path) as conn:
         cursor = conn.execute(
             'DELETE FROM snapshots WHERE ts_utc < ?',
             (cutoff.isoformat(),),
@@ -292,7 +270,7 @@ def load_history(db_path: Path, days: int, symbols: Iterable[str]) -> dict[str, 
         ORDER BY ts_utc ASC
     '''
     out: dict[str, list[dict[str, Any]]] = {symbol: [] for symbol in symbols}
-    with get_db_connection(db_path, read_only=True) as conn:
+    with sqlite3.connect(db_path) as conn:
         for ts_utc, symbol, price_usd, volume_24h_usd, market_cap_usd, cmc_rank in conn.execute(sql, params):
             out[symbol].append(
                 {
@@ -409,10 +387,10 @@ def apply_dashboard_theme() -> None:
         'axes.titlecolor': '#f5f8ff',
         'grid.color': '#27405f',
         'grid.alpha': 0.28,
-        'font.size': 13,
-        'axes.titlesize': 15,
-        'axes.labelsize': 13,
-        'legend.fontsize': 11,
+        'font.size': 11,
+        'axes.titlesize': 13,
+        'axes.labelsize': 11,
+        'legend.fontsize': 9,
     })
 
 
@@ -421,173 +399,108 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
     settings.output_dir.mkdir(parents=True, exist_ok=True)
     chart_path = settings.output_dir / f"stablecoin_monitor_{now_utc.astimezone(JST).strftime('%Y%m%d_%H%M%S')}.png"
 
-    fig = plt.figure(figsize=(14, 20))
+    # v2.01: 3-row dashboard with Y-axis label spacing fix
+    fig = plt.figure(figsize=(7, 5))
     fig.patch.set_facecolor('#07111f')
+    outer = fig.add_gridspec(3, 1, height_ratios=[1.5, 0.6, 0.6], hspace=0.26)
 
-    all_symbols = [settings.btc_symbol, *settings.stable_symbols]
-    palette_map: dict[str, str] = {'BTC': '#f5a524', 'USDT': '#34d399', 'USDC': '#60a5fa', 'FDUSD': '#c084fc'}
-    colors = [palette_map.get(s, '#60a5fa') for s in all_symbols]
+    stable_palette = ['#4ade80', '#60a5fa', '#f59e0b']
 
-    height_ratios = [3, 1, 3, 1, 3, 1, 3, 1]
-    gs = fig.add_gridspec(8, 1, height_ratios=height_ratios, hspace=0.04)
-
-    locator = mdates.AutoDateLocator(minticks=3, maxticks=6)
-    formatter = mdates.DateFormatter('%m-%d %H:%M', tz=JST)
-    symbol_blocks: list[tuple[Any, Any, str]] = []
-
-    for asset_idx, (symbol, color) in enumerate(zip(all_symbols, colors)):
-        rows = history.get(symbol, [])
-        is_btc = symbol == settings.btc_symbol
-        upper_idx = asset_idx * 2
-        lower_idx = upper_idx + 1
-
-        ax_line = fig.add_subplot(gs[upper_idx, 0])
-        ax_mcap = fig.add_subplot(gs[lower_idx, 0], sharex=ax_line)
-        block_facecolor = '#0d1626' if asset_idx % 2 == 0 else '#101b2e'
-        ax_line.set_facecolor(block_facecolor)
-        ax_mcap.set_facecolor(block_facecolor)
-        ax_line.text(0.02, 0.95, symbol, transform=ax_line.transAxes, fontsize=28, fontweight='bold', color=color, va='top', ha='left', zorder=10)
-        symbol_blocks.append((ax_line, ax_mcap, color))
-
-        if is_btc:
-            line_label = 'BTC (USD)'
-            ax_line.yaxis.set_major_formatter(mticker.FuncFormatter(lambda v, _: f'${v:,.0f}'))
-        else:
-            line_label = f'{symbol} Depeg (bp)'
-            ax_line.yaxis.set_major_formatter(mticker.FuncFormatter(lambda v, _: f'{v:+.1f}'))
-            ax_line.axhline(0, color='#60a5fa', lw=0.8, alpha=0.5, linestyle='--')
-
-        if rows:
-            x = [row['ts_utc'].astimezone(JST) for row in rows]
-
-            if is_btc:
-                y_values = [row['price_usd'] for row in rows]
-            else:
-                y_values = [(row['price_usd'] - 1.0) * 10000.0 for row in rows]
-                y_min = min(y_values)
-                y_max = max(y_values)
-                y_range = y_max - y_min
-                padding = y_range * 0.1 if y_range > 0 else 1.0
-                ax_line.set_ylim(y_min - padding, y_max + padding)
-
-            ax_line.plot(x, y_values, linewidth=1.8, color=color, zorder=3)
-            # Fill negative depeg region in red (70% opacity)
-            if not is_btc:
-                ax_line.fill_between(x, 0, y_values, where=[v < 0 for v in y_values],
-                                      color='red', alpha=0.3, zorder=2)
-
-            # Price label at top-right for all symbols
-            if is_btc:
-                price_text = f"${rows[-1]['price_usd']:,.0f}"
-                price_color = '#f5a524'
-            else:
-                dev_bp = (rows[-1]['price_usd'] - 1.0) * 10000.0
-                price_text = f"{dev_bp:+.1f}bp"
-                price_color = color
-            ax_line.text(
-                0.98,
-                0.92,
-                price_text,
-                transform=ax_line.transAxes,
-                ha='right',
-                va='top',
-                fontsize=16,
-                fontweight='bold',
-                color=price_color,
-                bbox={
-                    'boxstyle': 'round,pad=0.25',
-                    'facecolor': '#07111f',
-                    'edgecolor': '#2a3a57',
-                    'alpha': 0.72,
-                },
-                zorder=5,
-            )
-
-            y_mcap = [row['market_cap_usd'] / 1_000_000_000 for row in rows]
-            ax_mcap.bar(x, y_mcap, width=0.0025, color=color, alpha=0.5, zorder=2)
-            mcap_min = min(y_mcap)
-            mcap_max = max(y_mcap)
-            mcap_range = mcap_max - mcap_min
-            padding = mcap_range * 0.15 if mcap_range > 0 else 5.0
-            ax_mcap.set_ylim(mcap_min - padding, mcap_max + padding)
-
-        ax_line.set_ylabel(line_label, fontsize=14)
-        ax_line.grid(True, alpha=0.15)
-        ax_line.tick_params(axis='both', labelsize=12, labelbottom=False)
-        ax_line.spines['bottom'].set_visible(False)
-
-        ax_mcap.set_ylabel('MCap ($B)', fontsize=14)
-        ax_mcap.grid(True, alpha=0.15)
-        ax_mcap.tick_params(axis='both', labelsize=12)
-        ax_mcap.spines['top'].set_visible(False)
-
-        if asset_idx < len(all_symbols) - 1:
-            ax_mcap.tick_params(labelbottom=False)
-        else:
-            ax_mcap.xaxis.set_major_locator(locator)
-            ax_mcap.xaxis.set_major_formatter(formatter)
-
-    # --- Ticker bar at top (no per-panel annotations) ---
-    ticker_parts: list[str] = []
-    # BTC with percentage change
+    # Top row: BTC full-width card
+    ax_btc = fig.add_subplot(outer[0, 0])
     btc_rows = history.get(settings.btc_symbol, [])
     if btc_rows:
-        btc_price = btc_rows[-1]['price_usd']
-        if len(btc_rows) >= 2:
-            btc_prev = btc_rows[-2]['price_usd']
-            btc_pct = ((btc_price / btc_prev) - 1.0) * 100.0
-            ticker_parts.append(f"BTC ${btc_price:,.0f} {btc_pct:+.2f}%")
-        else:
-            ticker_parts.append(f"BTC ${btc_price:,.0f}")
+        btc_x = [row['ts_utc'].astimezone(JST) for row in btc_rows]
+        btc_y = [row['price_usd'] for row in btc_rows]
+        ax_btc.plot(btc_x, btc_y, linewidth=1.45, color='#f5a524', label=f'{settings.btc_symbol} price')
+        ax_btc.legend(loc='upper left', fontsize=7, frameon=False)
+    ax_btc.set_title('Stablecoin Monitor', fontsize=12, fontweight='bold', pad=15)
+    ax_btc.set_ylabel('BTC price', fontsize=8)
+    ax_btc.grid(True, alpha=0.22)
+    ax_btc.tick_params(axis='both', labelsize=7)
+    ax_btc.tick_params(labelbottom=False)
+
+    # Middle row: Deviation 1x3 cards (horizontal, not stacked, not combined)
+    dev_grid = outer[1, 0].subgridspec(1, 3, wspace=0.24)
+    ax_devs = [fig.add_subplot(dev_grid[0, i], sharex=ax_btc) for i in range(len(settings.stable_symbols))]
+
+    # Shared tick control for middle row (time labels)
+    dev_locator = mdates.AutoDateLocator(minticks=2, maxticks=4)
+    dev_formatter = mdates.DateFormatter('%m-%d %H:%M', tz=JST)
+
+    for ax, symbol, color in zip(ax_devs, settings.stable_symbols, stable_palette):
+        rows = history.get(symbol, [])
+        if rows:
+            x = [row['ts_utc'].astimezone(JST) for row in rows]
+            price_usd = [row['price_usd'] for row in rows]
+            # Use baseline for colors, but plot the raw price
+            baseline_price = 1.0 + (start_weighted_baseline_bp(rows) / 10000.0)
+            y_min, y_max = min(price_usd), max(price_usd)
+            ax.axhspan(baseline_price, y_max, color='#22c55e', alpha=0.07, zorder=0)
+            ax.axhspan(y_min, baseline_price, color='#EF4444', alpha=0.07, zorder=0)
+            
+            # Plot price line with colors based on baseline
+            add_baseline_colored_line(ax, x, price_usd, baseline_price, linewidth=0.9, zorder=4)
+            
+            # Draw baseline from the oldest 3h weighted average
+            ax.axhline(baseline_price, linestyle=':', linewidth=0.8, color='#dbeafe', alpha=0.85, zorder=3)
+            
+            # Set Y-axis range based on min/max values, ensuring $1 line is always visible
+            y_range = y_max - y_min
+            if y_range == 0:
+                ax.set_ylim(y_min - 0.0001, y_max + 0.0001)
+            else:
+                y_padding = y_range * 0.1
+                lower = min(y_min - y_padding, 1.0)
+                upper = max(y_max + y_padding, 1.0)
+                ax.set_ylim(lower, upper)
+        ax.axhline(1.0, linestyle='--', linewidth=0.7, color='#a5b8d6')
+        ax.set_title(f'{symbol} Price', loc='left', pad=4, fontsize=7.5, fontweight='bold')
+        ax.set_ylabel('')
+        ax.grid(True, alpha=0.22)
+        ax.tick_params(axis='both', labelsize=6)
+        ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, pos: f{x:.4f}))
+        # Show X-axis labels on middle row cards for time reference
+        ax.xaxis.set_major_locator(dev_locator)
+        ax.xaxis.set_major_formatter(dev_formatter)
+
+    # Bottom row: Volume 1x3 cards (horizontal, not stacked)
+    vol_grid = outer[2, 0].subgridspec(1, 3, wspace=0.24)
+    ax_vols = [fig.add_subplot(vol_grid[0, i], sharex=ax_btc) for i in range(len(settings.stable_symbols))]
+
+    # Compact tick control for narrow cards. Avoid ConciseDateFormatter offset text
+    # because it collides with the compact 7x5 dashboard footer.
+    locator = mdates.AutoDateLocator(minticks=2, maxticks=4)
+    formatter = mdates.DateFormatter('%m-%d %H:%M', tz=JST)
+
+    for i, (ax, symbol, color) in enumerate(zip(ax_vols, settings.stable_symbols, stable_palette)):
+        rows = history.get(symbol, [])
+        if rows:
+            x = [row['ts_utc'].astimezone(JST) for row in rows]
+            y = [row['volume_24h_usd'] / 1_000_000_000 for row in rows]
+            ax.plot(x, y, linewidth=1.05, color=color)
+        ax.set_title(f'{symbol} 24h volume', loc='left', pad=3, fontsize=7.5, fontweight='bold')
+        ax.set_ylabel('')
+        ax.grid(True, alpha=0.22)
+        ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, pos: f{x:.4f}))
+        ax.tick_params(axis='both', labelsize=6)
+        ax.xaxis.set_major_locator(locator)
+        ax.xaxis.set_major_formatter(formatter)
+
+    latest_labels = []
     for symbol in settings.stable_symbols:
         rows = history.get(symbol, [])
         if rows:
-            dev_bp = (rows[-1]['price_usd'] - 1.0) * 10000.0
-            ticker_parts.append(f"{symbol} {dev_bp:+.1f}bp")
-    if ticker_parts:
-        fig.suptitle(' | '.join(ticker_parts), fontsize=16, color='#eef4ff', y=0.985)
+            latest_labels.append(f"{symbol} {(rows[-1]['price_usd'] - 1.0) * 10000.0:+.1f}bp")
+    if btc_rows:
+        latest_labels.insert(0, f"{settings.btc_symbol} ${btc_rows[-1]['price_usd']:,.0f}")
+    if latest_labels:
+        fig.suptitle(' | '.join(latest_labels), fontsize=10, color='#dbe7ff', y=0.96)
+    fig.text(0.985, 0.018, now_utc.astimezone(JST).strftime('%Y-%m-%d %H:%M JST'),
+             ha='right', va='bottom', fontsize=6.5, color='#9fb0c9')
 
-    # Timestamp footer
-    fig.text(0.985, 0.01, now_utc.astimezone(JST).strftime('%Y-%m-%d %H:%M JST'),
-             ha='right', va='bottom', fontsize=10, color='#9fb0c9')
-
-    fig.subplots_adjust(left=0.06, right=0.97, top=0.96, bottom=0.06)
-
-    # Draw a subtle frame and left accent per symbol pair so each line+MCap pair
-    # reads as an independent plot block without hardcoding individual symbols.
-    fig.canvas.draw()
-    for ax_line, ax_mcap, color in symbol_blocks:
-        line_pos = ax_line.get_position()
-        mcap_pos = ax_mcap.get_position()
-        x0 = min(line_pos.x0, mcap_pos.x0) - 0.010
-        y0 = min(line_pos.y0, mcap_pos.y0) - 0.006
-        x1 = max(line_pos.x1, mcap_pos.x1) + 0.006
-        y1 = max(line_pos.y1, mcap_pos.y1) + 0.006
-        fig.add_artist(Rectangle(
-            (x0, y0),
-            x1 - x0,
-            y1 - y0,
-            transform=fig.transFigure,
-            fill=False,
-            edgecolor='#223653',
-            linewidth=1.0,
-            alpha=0.95,
-            zorder=10,
-            clip_on=False,
-        ))
-        fig.add_artist(Rectangle(
-            (x0, y0),
-            0.004,
-            y1 - y0,
-            transform=fig.transFigure,
-            facecolor=color,
-            edgecolor='none',
-            alpha=0.75,
-            zorder=11,
-            clip_on=False,
-        ))
-
-    fig.savefig(chart_path, dpi=180)
+    fig.subplots_adjust(left=0.075, right=0.985, top=0.93, bottom=0.095)
+    fig.savefig(chart_path, dpi=150)
     plt.close(fig)
     return chart_path
 
@@ -634,88 +547,26 @@ def send_discord(webhook_url: str, content: str, chart_path: Path, timeout_secon
     response.raise_for_status()
 
 
-def build_latest_quotes_from_history(settings: Settings, history: dict[str, list[dict[str, Any]]]) -> dict[str, dict[str, Any]]:
-    quotes: dict[str, dict[str, Any]] = {}
-    for symbol in (settings.btc_symbol, *settings.stable_symbols):
-        rows = history.get(symbol, [])
-        if rows:
-            latest = rows[-1]
-            quotes[symbol] = {
-                'price_usd': latest['price_usd'],
-                'volume_24h_usd': latest['volume_24h_usd'],
-            }
-        elif symbol == settings.btc_symbol:
-            quotes[symbol] = {'price_usd': 0.0, 'volume_24h_usd': 0.0}
-        else:
-            quotes[symbol] = {'price_usd': 1.0, 'volume_24h_usd': 0.0}
-    return quotes
+def run_once(settings: Settings, session: requests.Session) -> tuple[Path, str]:
+    ts_utc = datetime.now(UTC).replace(microsecond=0)
+    quotes = fetch_quotes_latest(session, settings)
+    save_snapshot(settings.db_path, ts_utc, quotes)
+    deleted = prune_db(settings.db_path, settings.retention_days)
+    if deleted:
+        logging.info('Pruned %s old rows.', deleted)
 
-
-def fetch_and_store_snapshot(session: requests.Session, settings: Settings) -> bool:
-    """Fetch the latest quotes and persist them to SQLite."""
-    try:
-        ts_utc = datetime.now(UTC).replace(microsecond=0)
-        quotes = fetch_quotes_latest(session, settings)
-        save_snapshot(settings.db_path, ts_utc, quotes)
-        deleted = prune_db(settings.db_path, settings.retention_days)
-        if deleted:
-            logging.info('Pruned %s old rows.', deleted)
-        return True
-    except KeyboardInterrupt:
-        raise
-    except Exception:
-        logging.exception('Fetch/store snapshot failed.')
-        return False
-
-
-def render_and_notify_chart(settings: Settings) -> bool:
-    """Load history, render the chart, and notify Discord if configured."""
-    try:
-        symbols = (settings.btc_symbol, *settings.stable_symbols)
-        history = load_history(settings.db_path, settings.history_days, symbols)
-    except KeyboardInterrupt:
-        raise
-    except Exception:
-        logging.exception('History loading failed.')
-        return False
-
-    try:
-        ts_utc = datetime.now(UTC).replace(microsecond=0)
-        chart_path = make_chart(settings, history, ts_utc)
-        logging.info('Chart saved: %s', chart_path)
-    except KeyboardInterrupt:
-        raise
-    except Exception:
-        logging.exception('Chart generation failed.')
-        return False
-
-    try:
-        latest_quotes = build_latest_quotes_from_history(settings, history)
-        summary = build_summary(settings, latest_quotes, history)
-    except KeyboardInterrupt:
-        raise
-    except Exception:
-        logging.warning('Summary generation failed; continuing without Discord summary.', exc_info=True)
-        summary = 'Stablecoin monitor chart updated.'
+    symbols = (settings.btc_symbol, *settings.stable_symbols)
+    history = load_history(settings.db_path, settings.history_days, symbols)
+    chart_path = make_chart(settings, history, ts_utc)
+    summary = build_summary(settings, quotes, history)
 
     if settings.discord_webhook_url:
-        try:
-            send_discord(settings.discord_webhook_url, summary, chart_path, settings.request_timeout_seconds)
-            logging.info('Discord notification sent.')
-        except KeyboardInterrupt:
-            raise
-        except Exception:
-            logging.exception('Discord notification failed.')
+        send_discord(settings.discord_webhook_url, summary, chart_path, settings.request_timeout_seconds)
+        logging.info('Discord notification sent.')
     else:
         logging.info('DISCORD_WEBHOOK_URL not set. Chart saved locally only.')
 
-    return True
-
-
-def run_once(settings: Settings, session: requests.Session) -> bool:
-    if not fetch_and_store_snapshot(session, settings):
-        return False
-    return render_and_notify_chart(settings)
+    return chart_path, summary
 
 
 def parse_args() -> argparse.Namespace:
@@ -748,40 +599,27 @@ def main() -> int:
     run_forever = args.loop or not args.once
     try:
         if not run_forever:
-            if not run_once(settings, session):
-                return 1
+            chart_path, summary = run_once(settings, session)
+            logging.info('Chart saved: %s', chart_path)
+            print(summary)
             return 0
 
-        # Initialize schedule boundaries
-        now = time.monotonic()
-        next_fetch_at = now + settings.fetch_interval_seconds
-        next_render_at = now + settings.render_interval_seconds
-
-        logging.info('Starting dual-interval loop. Fetch=%ss, Render=%ss',
-                     settings.fetch_interval_seconds, settings.render_interval_seconds)
+        logging.info('Starting loop. Interval=%ss', settings.poll_interval_seconds)
         while True:
-            now = time.monotonic()
+            start = time.monotonic()
+            try:
+                chart_path, summary = run_once(settings, session)
+                logging.info('Chart saved: %s', chart_path)
+                print(summary)
+            except KeyboardInterrupt:
+                raise
+            except Exception:
+                logging.exception('Cycle failed.')
 
-            # Process all due fetch cycles
-            while now >= next_fetch_at:
-                next_fetch_at += settings.fetch_interval_seconds
-                try:
-                    if fetch_and_store_snapshot(session, settings):
-                        logging.info('Fetch completed.')
-                except KeyboardInterrupt:
-                    raise
-
-            # Process all due render cycles
-            while now >= next_render_at:
-                next_render_at += settings.render_interval_seconds
-                try:
-                    if not render_and_notify_chart(settings):
-                        logging.warning('Render task failed.')
-                except KeyboardInterrupt:
-                    raise
-
-            # Sleep for 1 second to avoid busy loop
-            time.sleep(1)
+            elapsed = time.monotonic() - start
+            sleep_seconds = max(1, settings.poll_interval_seconds - int(elapsed))
+            logging.info('Sleeping %ss until next cycle.', sleep_seconds)
+            time.sleep(sleep_seconds)
     except KeyboardInterrupt:
         logging.info('Stopped by user.')
         return 0
