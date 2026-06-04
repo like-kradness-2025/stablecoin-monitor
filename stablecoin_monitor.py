@@ -677,10 +677,13 @@ def build_summary(settings: Settings, quotes: dict[str, dict[str, Any]], history
 
 
 def send_discord(webhook_url: str, content: str, chart_path: Path, timeout_seconds: int) -> None:
+    import json as _json
+
     with chart_path.open('rb') as fh:
+        payload = {'content': content, 'flags': 4096}
         response = requests.post(
             webhook_url,
-            data={'content': content},
+            data={'payload_json': _json.dumps(payload)},
             files={'file': (chart_path.name, fh, 'image/png')},
             timeout=timeout_seconds,
         )
