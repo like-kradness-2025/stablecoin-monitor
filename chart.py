@@ -81,15 +81,16 @@ if df.empty:
 
 df["dt"] = pd.to_datetime(df["ts_utc"])
 
-# Auto-resample — finer to preserve raw detail
+# Auto-resample — raw 5min for price, coarse for volume bars
+r = "5min"
 if dur_h <= 48:
-    r, vr, vw, xi, xf = "5min", "1h", 0.025, 6, "%H:%M"
+    vr, vw, xi, xf = "1h", 0.033, 6, "%H:%M"
 elif dur_h <= 168:
-    r, vr, vw, xi, xf = "5min", "3h", 0.35, 1, "%m/%d"
+    vr, vw, xi, xf = "3h", 0.1, 1, "%m/%d"
 elif dur_h <= 720:
-    r, vr, vw, xi, xf = "15min", "12h", 0.55, 3, "%m/%d"
+    vr, vw, xi, xf = "12h", 0.4, 3, "%m/%d"
 else:
-    r, vr, vw, xi, xf = "30min", "1D", 0.65, 7, "%m/%d"
+    vr, vw, xi, xf = "1D", 0.8, 7, "%m/%d"
 
 price_pivot = df.pivot_table(index="dt", columns="symbol", values="price_usd", aggfunc="first")
 price_pivot = price_pivot.resample(r).first().dropna().copy()
