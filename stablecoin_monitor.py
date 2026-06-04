@@ -359,6 +359,43 @@ def start_weighted_baseline_bp(rows: list[dict[str, Any]], window_hours: int = 3
     return weighted_sum / weight_sum
 
 
+def downsample_history(history: dict[str, list[dict[str, Any]]], period: str) -> dict[str, list[dict[str, Any]]]:
+    """Downsample history rows into time buckets based on the chart period."""
+    bucket_minutes = {'1week': 30, '1mo': 120}.get(period)
+    if bucket_minutes is None:
+        return history
+
+    def _floor_ts(ts: datetime, mins: int) -> datetime:
+        total = ts.hour * 60 + ts.minute
+        floored = (total // mins) * mins
+        return ts.replace(hour=floored // 60, minute=floored % 60, second=0, microsecond=0)
+
+    result: dict[str, list[dict[str, Any]]] = {}
+    for symbol, rows in history.items():
+        buckets: dict[datetime, list[dict[str, Any]]] = {}
+        for row in rows:
+            ts = row['ts_utc']
+            bucket_key = _floor_ts(ts, bucket_minutes)
+            buckets.setdefault(bucket_key, []).append(row)
+
+        downsampled: list[dict[str, Any]] = []
+        for bucket_key in sorted(buckets):
+            bucket_rows = buckets[bucket_key]
+            n = len(bucket_rows)
+            avg_price = sum(r['price_usd'] for r in bucket_rows) / n
+            avg_volume = sum(r['volume_24h_usd'] for r in bucket_rows) / n
+            avg_mcap = sum(r['market_cap_usd'] for r in bucket_rows) / n
+            downsampled.append({
+                **bucket_rows[0],
+                'ts_utc': bucket_key,
+                'price_usd': avg_price,
+                'volume_24h_usd': avg_volume,
+                'market_cap_usd': avg_mcap,
+            })
+        result[symbol] = downsampled
+    return result
+
+
 def add_baseline_colored_line(
     ax: plt.Axes,
     x: list[datetime],
@@ -695,6 +732,7 @@ def render_and_notify_chart(settings: Settings, period: str = '1day') -> bool:
             days = settings.history_days
             logging.warning('Unknown period %s, falling back to history_days=%s', period, days)
         history = load_history(settings.db_path, days, symbols)
+        history = downsample_history(history, period)
     except KeyboardInterrupt:
         raise
     except Exception:
