@@ -5,6 +5,8 @@ __pycache__/
 *.pyd
 *.log
 *.db
+*.db-shm
+*.db-wal
 *.pid
 *.lock
 .env
@@ -16,3 +18,8 @@ runtime/
 dist/
 build/
 tmp/
+data/
+.coverage
+coverage.xml
+*.zip
+.cache/
