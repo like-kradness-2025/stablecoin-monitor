@@ -57,14 +57,12 @@ COLOR = {"BTC":"#60a5fa","USDT":"#cbd5e1","USDC":"#38bdf8","FDUSD":"#d8b4fe",
 
 # Fill thresholds for negative fill (bp)
 FILL_THRESH = {"USDT": -10, "USDC": -3, "FDUSD": -20}
-MIN_YLIM = {"USDT": 8.0, "USDC": 4.0, "FDUSD": 15.0}
 
-def depeg_ylim(series, pad_ratio=0.25, min_half=2.0):
-    """Percentile-based symmetric y-limits so outliers don't compress the view."""
-    p1 = np.percentile(series, 1)
-    p99 = np.percentile(series, 99)
-    half = max(abs(p1), abs(p99)) * (1 + pad_ratio)
-    return -max(half, min_half), max(half, min_half)
+def auto_ylim(series, pad_ratio=0.15):
+    """Auto-scale y-limits to data min/max with padding."""
+    mn, mx = series.min(), series.max()
+    rng = max(mx - mn, 0.5)
+    return mn - rng * pad_ratio, mx + rng * pad_ratio
 
 # --- Data ---
 start_iso = start.strftime("%Y-%m-%dT%H:%M:%S+00:00")
@@ -119,7 +117,7 @@ def style_ax(ax):
 
 for ax in axes: style_ax(ax)
 
-def add_vol_axis(ax, sym, vol_series, vol_width):
+def add_vol_axis(ax, sym, vol_series, vol_width, price_series=None, baseline=None):
     """Add volume axis with bars, mean line, zero-based, dynamic unit."""
     ax_t = ax.twinx()
     # Dynamic unit: $B for >=1B, $M for <1B
@@ -133,17 +131,21 @@ def add_vol_axis(ax, sym, vol_series, vol_width):
         unit = "$B"
         fmt = lambda x, _: f"{x:.0f}"
     
-    # Volume bars — zero-based
+    # Volume bars — zero-based, color by direction vs period start
+    if price_series is not None and baseline is not None:
+        aligned = price_series.reindex(v.index, method="ffill")
+        bar_colors = np.where(aligned < baseline, "#fca5a5", "#7dd3fc")
+    else:
+        bar_colors = COLOR[sym]
     ax_t.bar(v.index, v.values, width=vol_width,
-             color=COLOR[sym], alpha=0.06, zorder=0)
+             color=bar_colors, alpha=0.06, zorder=0)
     
     # Mean volume line — subtle
     v_mean = v.mean()
     ax_t.axhline(v_mean, color=COLOR[sym], lw=0.7, ls=":", alpha=0.35, zorder=1)
     
-    # Volume y-axis: zero-based
-    v_max = v.max()
-    ax_t.set_ylim(0, v_max * 1.18 if v_max > 0 else 1)
+    # Volume y-axis: auto-scale like depeg panels
+    ax_t.set_ylim(auto_ylim(v.values))
     
     # Format y-axis labels
     ax_t.yaxis.set_major_formatter(FuncFormatter(fmt))
@@ -173,7 +175,7 @@ ax1.set_ylabel("BTC (USD)", fontsize=10, color=COLOR["BTC"])
 ax1.set_title("BTC Price + Volume", fontsize=12, color="#e2e8f0", pad=4)
 btc_pad = (prices["BTC"].max() - prices["BTC"].min()) * 0.08
 ax1.set_ylim(prices["BTC"].min() - btc_pad, prices["BTC"].max() + btc_pad)
-add_vol_axis(ax1, "BTC", volumes["BTC"], vw)
+add_vol_axis(ax1, "BTC", volumes["BTC"], vw, price_series=prices["BTC"], baseline=prices["BTC"].iloc[0])
 
 # --- Panel 2: USDT ---
 ax2 = axes[1]
@@ -187,15 +189,15 @@ ax2.axhline(0, color=COLOR["zero"], lw=0.9, alpha=0.45, zorder=2)
 ax2.axhline(th, color=COLOR["neg_fill"], lw=0.5, ls=":", alpha=0.25, zorder=2)
 ax2.set_ylabel("USDT depeg (bp)", fontsize=10, color=COLOR["USDT"])
 ax2.set_title("USDT Depeg + Volume", fontsize=12, color="#e2e8f0", pad=4)
-ylim2 = depeg_ylim(prices["USDT_depeg"], min_half=MIN_YLIM["USDT"])
-ax2.set_ylim(ylim2)
+ax2.set_ylim(auto_ylim(prices["USDT_depeg"]))
 ax2.yaxis.set_major_locator(MultipleLocator(5))
-add_vol_axis(ax2, "USDT", volumes["USDT"], vw)
+add_vol_axis(ax2, "USDT", volumes["USDT"], vw, price_series=prices["USDT"], baseline=prices["USDT"].iloc[0])
 
 # Top 5 extremes — avoid bottom edge
 extreme = prices.nsmallest(min(5, max(1, len(prices)//50)), "USDT_depeg")
+ax2_ylim = ax2.get_ylim()
 for i, (dt, r) in enumerate(extreme.iterrows()):
-    is_bottom = r["USDT_depeg"] < ylim2[0] * 0.7
+    is_bottom = r["USDT_depeg"] < ax2_ylim[0] * 0.7
     offset_y = (12 if is_bottom else -16) + (i * 2 if is_bottom else -i * 3)
     va = "bottom" if is_bottom else "top"
     ax2.annotate(f"{r['USDT_depeg']:.1f} bp",
@@ -218,9 +220,9 @@ ax3.axhline(0, color=COLOR["zero"], lw=0.9, alpha=0.45, zorder=2)
 ax3.axhline(th3, color=COLOR["USDC"], lw=0.5, ls=":", alpha=0.25, zorder=2)
 ax3.set_ylabel("USDC depeg (bp)", fontsize=10, color=COLOR["USDC"])
 ax3.set_title("USDC Depeg + Volume", fontsize=12, color="#e2e8f0", pad=4)
-ax3.set_ylim(depeg_ylim(prices["USDC_depeg"], min_half=MIN_YLIM["USDC"]))
+ax3.set_ylim(auto_ylim(prices["USDC_depeg"]))
 ax3.yaxis.set_major_locator(MultipleLocator(2))
-add_vol_axis(ax3, "USDC", volumes["USDC"], vw)
+add_vol_axis(ax3, "USDC", volumes["USDC"], vw, price_series=prices["USDC"], baseline=prices["USDC"].iloc[0])
 
 # --- Panel 4: FDUSD ---
 ax4 = axes[3]
@@ -234,9 +236,9 @@ ax4.axhline(0, color=COLOR["zero"], lw=0.9, alpha=0.45, zorder=2)
 ax4.axhline(th4, color=COLOR["FDUSD"], lw=0.5, ls=":", alpha=0.25, zorder=2)
 ax4.set_ylabel("FDUSD depeg (bp)", fontsize=10, color=COLOR["FDUSD"])
 ax4.set_title("FDUSD Depeg + Volume", fontsize=12, color="#e2e8f0", pad=4)
-ax4.set_ylim(depeg_ylim(prices["FDUSD_depeg"], min_half=MIN_YLIM["FDUSD"]))
+ax4.set_ylim(auto_ylim(prices["FDUSD_depeg"]))
 ax4.yaxis.set_major_locator(MultipleLocator(10))
-add_vol_axis(ax4, "FDUSD", volumes["FDUSD"], vw)
+add_vol_axis(ax4, "FDUSD", volumes["FDUSD"], vw, price_series=prices["FDUSD"], baseline=prices["FDUSD"].iloc[0])
 
 # X-axis
 if dur_h <= 48:
