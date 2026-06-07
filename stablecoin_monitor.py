@@ -465,14 +465,14 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
     settings.output_dir.mkdir(parents=True, exist_ok=True)
     chart_path = settings.output_dir / f"stablecoin_monitor_{period}_{now_utc.astimezone(JST).strftime('%Y%m%d_%H%M%S')}.png"
 
-    fig = plt.figure(figsize=(14, 14))
+    fig = plt.figure(figsize=(14, 16))
     fig.patch.set_facecolor('#07111f')
 
     all_symbols = [settings.btc_symbol, *settings.stable_symbols]
     palette_map: dict[str, str] = {'BTC': '#f5a524', 'USDT': '#34d399', 'USDC': '#60a5fa', 'FDUSD': '#c084fc'}
     colors = [palette_map.get(s, '#60a5fa') for s in all_symbols]
 
-    height_ratios = [3, 1, 3, 1, 3, 1, 3, 1]
+    height_ratios = [3, 1] * 4  # [3, 1, 3, 1, 3, 1, 3, 1]
     gs = fig.add_gridspec(8, 1, height_ratios=height_ratios, hspace=0.04)
 
     locator = mdates.AutoDateLocator(minticks=3, maxticks=6)
@@ -487,7 +487,7 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
         rows = history.get(symbol, [])
         is_btc = symbol == settings.btc_symbol
         upper_idx = asset_idx * 2
-        lower_idx = upper_idx + 1
+        lower_idx = asset_idx * 2 + 1
 
         ax_line = fig.add_subplot(gs[upper_idx, 0])
         ax_mcap = fig.add_subplot(gs[lower_idx, 0], sharex=ax_line)
@@ -498,6 +498,15 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
         ax_mcap.margins(x=0)
         ax_line.text(0.02, 0.95, symbol, transform=ax_line.transAxes, fontsize=32, fontweight='bold', color=color, va='top', ha='left', zorder=10)
         symbol_blocks.append((ax_line, ax_mcap, color))
+
+        # --- Volume as twinx on price/depeg axis ---
+        ax_vol = ax_line.twinx()
+        ax_vol.tick_params(axis='y', labelleft=False, labelright=False, labelsize=9)
+        ax_vol.spines['right'].set_visible(False)
+        ax_vol.spines['top'].set_visible(False)
+        # Price line on top of volume bars
+        ax_line.set_zorder(ax_vol.get_zorder() + 1)
+        ax_line.patch.set_visible(False)
 
         if is_btc:
             line_label = 'BTC (USD)'
@@ -558,13 +567,22 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
                 zorder=5,
             )
 
+            # Volume bars on twinx axis (behind price line via alpha + zorder)
+            y_vol = [row['volume_24h_usd'] / 1_000_000_000 for row in rows]
+            ax_vol.bar(x, y_vol, width=bar_width, color=color, alpha=0.30, zorder=0)
+            vol_min = min(y_vol)
+            vol_max = max(y_vol)
+            vol_range = vol_max - vol_min
+            vol_padding = vol_range * 0.15 if vol_range > 0 else 5.0
+            ax_vol.set_ylim(vol_min - vol_padding, vol_max + vol_padding)
+
             y_mcap = [row['market_cap_usd'] / 1_000_000_000 for row in rows]
             ax_mcap.bar(x, y_mcap, width=bar_width, color=color, alpha=0.5, zorder=2)
             mcap_min = min(y_mcap)
             mcap_max = max(y_mcap)
             mcap_range = mcap_max - mcap_min
-            padding = mcap_range * 0.15 if mcap_range > 0 else 5.0
-            ax_mcap.set_ylim(mcap_min - padding, mcap_max + padding)
+            mcap_padding = mcap_range * 0.15 if mcap_range > 0 else 5.0
+            ax_mcap.set_ylim(mcap_min - mcap_padding, mcap_max + mcap_padding)
 
         ax_line.set_ylabel(line_label, fontsize=14)
         ax_line.grid(True, alpha=0.15)
@@ -608,8 +626,8 @@ def make_chart(settings: Settings, history: dict[str, list[dict[str, Any]]], now
 
     fig.subplots_adjust(left=0.06, right=0.97, top=0.96, bottom=0.06)
 
-    # Draw a subtle frame and left accent per symbol pair so each line+MCap pair
-    # reads as an independent plot block without hardcoding individual symbols.
+    # Draw a subtle frame and left accent per 2-panel symbol block so each
+    # price/mcap block reads as independent without hardcoded symbols.
     fig.canvas.draw()
     for ax_line, ax_mcap, color in symbol_blocks:
         line_pos = ax_line.get_position()
